@@ -1,0 +1,28 @@
+.DS_Store
+
+# Terraform local state and working directories
+**/.terraform/
+**/.terraform.lock.hcl
+/.terraform-plugin-cache/
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/crash.log
+**/crash.*.log
+**/*.tfplan
+
+# Local keys and generated artifacts
+**/*.pem
+**/*.key
+**/path.out
+**/plan.json
+
+# Build outputs
+**/target/
+**/__pycache__/
+**/.pytest_cache/
+
+# Generated rehearsal reports
+/reports/*.log
+
+# Local-only imported reference material from the previous course repo
+/terraform/source-labs/

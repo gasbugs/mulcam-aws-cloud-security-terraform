@@ -1,0 +1,326 @@
+{
+  "course_code": "FA01HC",
+  "course_title": "AWS 클라우드 보안",
+  "source_url": "https://m.multicampus.com/course/crsDetail?corsCd=FA01HC",
+  "days": [
+    {
+      "day": 1,
+      "title": "클라우드와 보안 / AWS 계정 관리",
+      "units": [
+        {
+          "id": "d01u01",
+          "section": "클라우드와 보안",
+          "time": "09:30-10:30",
+          "title": "클라우드 서비스 개념",
+          "kind": "guide",
+          "path": "terraform/fa01hc/day01-cloud-and-account-security/01-cloud-service-concepts"
+        },
+        {
+          "id": "d01u02",
+          "section": "클라우드와 보안",
+          "time": "10:30-11:30",
+          "title": "클라우드 보안 이해",
+          "kind": "guide",
+          "path": "terraform/fa01hc/day01-cloud-and-account-security/02-cloud-security-fundamentals"
+        },
+        {
+          "id": "d01u03",
+          "section": "클라우드와 보안",
+          "time": "12:30-13:30",
+          "title": "AWS 환경에서 사고 대응",
+          "kind": "guide",
+          "path": "terraform/fa01hc/day01-cloud-and-account-security/03-aws-incident-response-overview"
+        },
+        {
+          "id": "d01u04",
+          "section": "AWS 계정 관리",
+          "time": "13:30-14:30",
+          "title": "AWS 서비스 살펴보기",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day01-cloud-and-account-security/04-aws-services-overview"
+        },
+        {
+          "id": "d01u05",
+          "section": "AWS 계정 관리",
+          "time": "14:30-15:30",
+          "title": "AWS 계정 구성, 계정 보호 및 사용자 접근 제어",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day01-cloud-and-account-security/05-account-protection-and-access-control",
+          "source_path": "terraform/source-labs/07_aws-access-control-and-secret-management/user-creation-using-terraform"
+        },
+        {
+          "id": "d01u06",
+          "section": "AWS 계정 관리",
+          "time": "15:30-16:30",
+          "title": "AWS IAM 기본",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day01-cloud-and-account-security/06-iam-basics",
+          "source_path": "terraform/source-labs/07_aws-access-control-and-secret-management/iam-practice"
+        },
+        {
+          "id": "d01u07",
+          "section": "AWS 계정 관리",
+          "time": "16:30-17:30",
+          "title": "IAM Identity Center를 활용한 SSO 유저 관리",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day01-cloud-and-account-security/07-iam-identity-center-sso",
+          "source_path": "terraform/source-labs/07_aws-access-control-and-secret-management/terraform-iam-identity-center"
+        }
+      ]
+    },
+    {
+      "day": 2,
+      "title": "AWS 계정 관리 / AWS 컴퓨팅 서비스 보안",
+      "units": [
+        {
+          "id": "d02u01",
+          "section": "AWS 계정 관리",
+          "time": "09:30-10:30",
+          "title": "CloudTrail 이벤트를 활용한 유저 감사와 CloudWatch 경보",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day02-account-and-compute-security/01-cloudtrail-user-audit-cloudwatch-alarm"
+        },
+        {
+          "id": "d02u02",
+          "section": "AWS 계정 관리",
+          "time": "10:30-11:30",
+          "title": "IAM 액세스 분석기",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day02-account-and-compute-security/02-iam-access-analyzer"
+        },
+        {
+          "id": "d02u03",
+          "section": "AWS 컴퓨팅 서비스 보안",
+          "time": "12:30-13:30",
+          "title": "EC2를 활용한 가상머신 구성과 활용 이해 / 공인 IP 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day02-account-and-compute-security/03-ec2-virtual-machine-and-public-ip",
+          "source_path": "terraform/source-labs/03_terraform-aws-config/ec2-practice"
+        },
+        {
+          "id": "d02u04",
+          "section": "AWS 컴퓨팅 서비스 보안",
+          "time": "13:30-14:30",
+          "title": "부트스트랩 / EBS 기본 기능 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day02-account-and-compute-security/04-bootstrap-and-ebs"
+        },
+        {
+          "id": "d02u05",
+          "section": "AWS 컴퓨팅 서비스 보안",
+          "time": "14:30-15:30",
+          "title": "배치 그룹을 활용한 스케줄링 전략 이해 / 예약·스팟 인스턴스를 활용한 비용 절감",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day02-account-and-compute-security/05-placement-group-reserved-spot-instances"
+        },
+        {
+          "id": "d02u06",
+          "section": "AWS 컴퓨팅 서비스 보안",
+          "time": "15:30-16:30",
+          "title": "람다와 API 게이트웨이를 활용한 서버리스 컴퓨팅 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day02-account-and-compute-security/06-lambda-api-gateway-serverless",
+          "source_path": "terraform/source-labs/04_aws-serverless-services-using-terraform/api-service-implementation-using-lambda"
+        },
+        {
+          "id": "d02u07",
+          "section": "AWS 컴퓨팅 서비스 보안",
+          "time": "16:30-17:30",
+          "title": "ECS/EKS를 활용한 컨테이너 컴퓨팅 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day02-account-and-compute-security/07-ecs-eks-container-computing",
+          "source_path": "terraform/source-labs/08_ecs-cluster-mgmt/ecs-cluster-mgmt"
+        }
+      ]
+    },
+    {
+      "day": 3,
+      "title": "AWS 컴퓨팅 서비스 보안 / AWS 네트워크 인프라 보안",
+      "units": [
+        {
+          "id": "d03u01",
+          "section": "AWS 컴퓨팅 서비스 보안",
+          "time": "09:30-10:30",
+          "title": "S3를 활용한 저장소 구성과 웹 정적 컨텐츠 서비스 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day03-compute-and-network-security/01-s3-static-content-service",
+          "source_path": "terraform/source-labs/04_aws-serverless-services-using-terraform/static-website-hosting-using-s3"
+        },
+        {
+          "id": "d03u02",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "10:30-11:30",
+          "title": "VPC를 활용한 가상 네트워크 구성 이해 / 보안 그룹·NACLs를 활용한 보호 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day03-compute-and-network-security/02-vpc-security-group-nacl",
+          "source_path": "terraform/source-labs/03_terraform-aws-config/understanding-vpc-and-ec2-management-with-terraform"
+        },
+        {
+          "id": "d03u03",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "12:30-13:30",
+          "title": "베스쳔 호스트 / NAT 게이트웨이와 Egress-Only Internet Gateway",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day03-compute-and-network-security/03-bastion-nat-egress-only-gateway"
+        },
+        {
+          "id": "d03u04",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "13:30-14:30",
+          "title": "VPC 엔드포인트 / VPC 라우팅",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day03-compute-and-network-security/04-vpc-endpoint-and-routing",
+          "source_path": "terraform/source-labs/03_terraform-aws-config/vpc-module-complete"
+        },
+        {
+          "id": "d03u05",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "14:30-15:30",
+          "title": "CloudFront와 Route53 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day03-compute-and-network-security/05-cloudfront-route53",
+          "source_path": "terraform/source-labs/04_aws-serverless-services-using-terraform/route53-cloudfront-s3-modules"
+        },
+        {
+          "id": "d03u06",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "15:30-16:30",
+          "title": "AWS WAF를 활용한 웹 애플리케이션 보호",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day03-compute-and-network-security/06-aws-waf-web-application-protection",
+          "source_path": "terraform/source-labs/04_aws-serverless-services-using-terraform/cloudfront-waf-s3-modules"
+        },
+        {
+          "id": "d03u07",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "16:30-17:30",
+          "title": "VPC 피어링를 활용한 VPC 간 연결",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day03-compute-and-network-security/07-vpc-peering"
+        }
+      ]
+    },
+    {
+      "day": 4,
+      "title": "AWS 네트워크 인프라 보안 / 저장소 보안",
+      "units": [
+        {
+          "id": "d04u01",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "09:30-10:30",
+          "title": "로드밸런서와 오토스케일링를 활용한 가상머신 가용성 구성",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day04-network-and-storage-security/01-load-balancer-autoscaling-availability",
+          "source_path": "terraform/source-labs/05_elb-asg-terraform/asg-elb-infra"
+        },
+        {
+          "id": "d04u02",
+          "section": "AWS 네트워크 인프라 보안",
+          "time": "10:30-11:30",
+          "title": "VPN과 다이렉트 커넥트 이해",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day04-network-and-storage-security/02-vpn-direct-connect"
+        },
+        {
+          "id": "d04u03",
+          "section": "저장소 보안",
+          "time": "12:30-13:30",
+          "title": "Aurora와 RDS를 활용한 관계형 데이터베이스",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day04-network-and-storage-security/03-aurora-rds-relational-database",
+          "source_path": "terraform/source-labs/06_db-service-management/aurora-mysql-service"
+        },
+        {
+          "id": "d04u04",
+          "section": "저장소 보안",
+          "time": "13:30-14:30",
+          "title": "DynamoDB를 활용한 Key-Value 데이터베이스",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day04-network-and-storage-security/04-dynamodb-key-value-database",
+          "source_path": "terraform/source-labs/06_db-service-management/dynamodb-service"
+        },
+        {
+          "id": "d04u05",
+          "section": "저장소 보안",
+          "time": "14:30-15:30",
+          "title": "ElastiCache를 활용한 캐싱 서버",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day04-network-and-storage-security/05-elasticache-caching-server",
+          "source_path": "terraform/source-labs/06_db-service-management/valkey-oss-connection"
+        },
+        {
+          "id": "d04u06",
+          "section": "저장소 보안",
+          "time": "15:30-16:30",
+          "title": "KMS 서비스를 활용한 키 구성과 저장소 암호화",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day04-network-and-storage-security/06-kms-storage-encryption",
+          "source_path": "terraform/source-labs/07_aws-access-control-and-secret-management/managing-kms-with-terraform"
+        },
+        {
+          "id": "d04u07",
+          "section": "저장소 보안",
+          "time": "16:30-17:30",
+          "title": "S3 액세스 로그 기록",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day04-network-and-storage-security/07-s3-access-logs"
+        }
+      ]
+    },
+    {
+      "day": 5,
+      "title": "저장소 보안 / AWS 보안 서비스 이해",
+      "units": [
+        {
+          "id": "d05u01",
+          "section": "저장소 보안",
+          "time": "09:30-10:30",
+          "title": "Secret Manager를 활용한 비밀 정보 관리",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day05-storage-and-security-services/01-secrets-manager-secret-management",
+          "source_path": "terraform/source-labs/07_aws-access-control-and-secret-management/managing-secrets-manager-with-terraform"
+        },
+        {
+          "id": "d05u02",
+          "section": "AWS 보안 서비스 이해",
+          "time": "10:30-11:30",
+          "title": "AWS Config를 활용한 규정 준수",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day05-storage-and-security-services/02-aws-config-compliance"
+        },
+        {
+          "id": "d05u03",
+          "section": "AWS 보안 서비스 이해",
+          "time": "12:30-13:30",
+          "title": "Inspector를 활용한 취약성 관리",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day05-storage-and-security-services/03-inspector-vulnerability-management"
+        },
+        {
+          "id": "d05u04",
+          "section": "AWS 보안 서비스 이해",
+          "time": "13:30-14:30",
+          "title": "GuardDuty를 활용한 악성코드 탐지",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day05-storage-and-security-services/04-guardduty-threat-detection"
+        },
+        {
+          "id": "d05u05",
+          "section": "AWS 보안 서비스 이해",
+          "time": "14:30-15:30",
+          "title": "Macie를 활용한 민감 정보 탐지",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day05-storage-and-security-services/05-macie-sensitive-data-discovery"
+        },
+        {
+          "id": "d05u06",
+          "section": "AWS 보안 서비스 이해",
+          "time": "15:30-16:30",
+          "title": "SecurityHub를 활용한 보안 상태 통합 보기, Incident Manager를 활용한 대응 계획 수립",
+          "kind": "terraform",
+          "path": "terraform/fa01hc/day05-storage-and-security-services/06-securityhub-incident-manager"
+        }
+      ]
+    }
+  ]
+}
