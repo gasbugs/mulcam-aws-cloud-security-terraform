@@ -22,7 +22,7 @@ resource "aws_vpc" "this" {
 }
 
 resource "aws_subnet" "private" {
-  for_each = local.vpcs
+  for_each = local.workload_vpcs
 
   availability_zone       = local.availability_zone
   cidr_block              = each.value.private_subnet_cidr
@@ -35,8 +35,46 @@ resource "aws_subnet" "private" {
   })
 }
 
+resource "aws_subnet" "workload_tgw" {
+  for_each = local.workload_vpcs
+
+  availability_zone       = local.availability_zone
+  cidr_block              = each.value.tgw_subnet_cidr
+  map_public_ip_on_launch = false
+  vpc_id                  = aws_vpc.this[each.key].id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-${each.key}-tgw-subnet"
+    Role = "workload-tgw"
+  })
+}
+
+resource "aws_subnet" "inspection_firewall" {
+  availability_zone       = local.availability_zone
+  cidr_block              = local.vpcs[local.inspection_vpc_key].firewall_subnet_cidr
+  map_public_ip_on_launch = false
+  vpc_id                  = aws_vpc.this[local.inspection_vpc_key].id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-inspection-firewall-subnet"
+    Role = "inspection-firewall"
+  })
+}
+
+resource "aws_subnet" "inspection_tgw" {
+  availability_zone       = local.availability_zone
+  cidr_block              = local.vpcs[local.inspection_vpc_key].tgw_subnet_cidr
+  map_public_ip_on_launch = false
+  vpc_id                  = aws_vpc.this[local.inspection_vpc_key].id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-inspection-tgw-subnet"
+    Role = "inspection-tgw"
+  })
+}
+
 resource "aws_route_table" "private" {
-  for_each = local.vpcs
+  for_each = local.workload_vpcs
 
   vpc_id = aws_vpc.this[each.key].id
 
@@ -47,19 +85,80 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route_table_association" "private" {
-  for_each = local.vpcs
+  for_each = local.workload_vpcs
 
   route_table_id = aws_route_table.private[each.key].id
   subnet_id      = aws_subnet.private[each.key].id
 }
 
-resource "aws_security_group" "instance" {
-  for_each = local.vpcs
+resource "aws_route_table" "workload_tgw" {
+  for_each = local.workload_vpcs
 
-  description            = "Student-managed firewall rules for ${each.key} peering tests"
+  vpc_id = aws_vpc.this[each.key].id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-${each.key}-tgw-rt"
+    Role = "workload-tgw"
+  })
+}
+
+resource "aws_route_table_association" "workload_tgw" {
+  for_each = local.workload_vpcs
+
+  route_table_id = aws_route_table.workload_tgw[each.key].id
+  subnet_id      = aws_subnet.workload_tgw[each.key].id
+}
+
+resource "aws_route_table" "inspection_firewall" {
+  vpc_id = aws_vpc.this[local.inspection_vpc_key].id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-inspection-firewall-rt"
+    Role = "inspection-firewall"
+  })
+}
+
+resource "aws_route_table" "inspection_tgw" {
+  vpc_id = aws_vpc.this[local.inspection_vpc_key].id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-inspection-tgw-rt"
+    Role = "inspection-tgw"
+  })
+}
+
+resource "aws_route_table_association" "inspection_firewall" {
+  route_table_id = aws_route_table.inspection_firewall.id
+  subnet_id      = aws_subnet.inspection_firewall.id
+}
+
+resource "aws_route_table_association" "inspection_tgw" {
+  route_table_id = aws_route_table.inspection_tgw.id
+  subnet_id      = aws_subnet.inspection_tgw.id
+}
+
+resource "aws_security_group" "instance" {
+  for_each = local.workload_vpcs
+
+  description            = "Allow ICMP tests after traffic is routed through Network Firewall for ${each.key}"
   name                   = "${var.project_name}-${each.key}-instance-sg"
   revoke_rules_on_delete = true
   vpc_id                 = aws_vpc.this[each.key].id
+
+  dynamic "ingress" {
+    for_each = {
+      for name, config in local.workload_vpcs : name => config
+      if name != each.key
+    }
+
+    content {
+      cidr_blocks = [ingress.value.cidr_block]
+      description = "ICMP from ${ingress.key} workload VPC"
+      from_port   = -1
+      protocol    = "icmp"
+      to_port     = -1
+    }
+  }
 
   egress {
     cidr_blocks = ["0.0.0.0/0"]
@@ -76,7 +175,7 @@ resource "aws_security_group" "instance" {
 }
 
 resource "aws_security_group" "endpoint" {
-  for_each = local.vpcs
+  for_each = local.workload_vpcs
 
   description            = "Allow HTTPS from ${each.key} VPC instances to SSM endpoints"
   name                   = "${var.project_name}-${each.key}-ssm-endpoint-sg"
@@ -151,7 +250,7 @@ resource "aws_iam_instance_profile" "ssm" {
 }
 
 resource "aws_instance" "this" {
-  for_each = local.vpcs
+  for_each = local.workload_vpcs
 
   ami                         = data.aws_ssm_parameter.al2023.value
   associate_public_ip_address = false

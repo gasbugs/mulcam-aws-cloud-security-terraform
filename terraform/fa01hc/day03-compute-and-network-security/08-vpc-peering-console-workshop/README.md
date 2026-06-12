@@ -1,42 +1,64 @@
-# 3일차 / VPC Peering 콘솔 실습 준비 랩
+# 3일차 / TGW와 중앙 방화벽 Inspection 콘솔 실습 준비 랩
 
-이 실습은 강사가 Terraform으로 기본 VPC 환경을 미리 배포하고, 수강생은 AWS 콘솔에서 VPC Peering과 방화벽(Security Group) 연결만 직접 완성하도록 구성합니다.
+이 실습은 강사가 Terraform으로 App VPC, Shared VPC, Inspection VPC, 테스트 인스턴스, SSM 접속 환경만 미리 배포하고, 수강생이 AWS 콘솔에서 Transit Gateway와 AWS Network Firewall, 라우팅 경로를 직접 완성하도록 구성합니다.
 
-Terraform은 Peering Connection, Peering Route, ICMP 인바운드 Security Group Rule을 만들지 않습니다. 이 세 가지가 수강생 실습 범위입니다.
+중요한 제약이 있습니다. VPC Peering만으로는 `App VPC -> Firewall VPC -> Shared VPC`처럼 중간 VPC를 경유하는 통신을 만들 수 없습니다. VPC Peering은 transitive routing을 지원하지 않기 때문입니다. 그래서 중간 방화벽을 실제 경로에 삽입하려면 Transit Gateway, Inspection VPC, AWS Network Firewall 구조가 필요합니다.
+
+Terraform은 다음 항목을 만들지 않습니다. 이 항목들이 수강생 실습 범위입니다.
+
+- Transit Gateway
+- TGW VPC attachment
+- TGW route table, association, route
+- AWS Network Firewall rule group
+- AWS Network Firewall policy
+- AWS Network Firewall
+- VPC route table의 TGW 및 firewall endpoint route
 
 ## 1. 실습 아키텍처
 
 ```mermaid
 flowchart LR
     APP["App VPC<br/>10.30.0.0/16<br/>Private EC2"]
+    APP_TGW["App TGW Subnet<br/>10.30.2.0/24"]
+    TGW["Transit Gateway<br/>수강생 생성"]
+    INSP_TGW["Inspection VPC<br/>TGW Attachment Subnet<br/>10.50.2.0/24"]
+    NFW["AWS Network Firewall<br/>Firewall Subnet<br/>10.50.1.0/24"]
+    SHARED_TGW["Shared TGW Subnet<br/>10.40.2.0/24"]
     SHARED["Shared VPC<br/>10.40.0.0/16<br/>Private EC2"]
 
-    APP -. "수강생이 콘솔에서 VPC Peering 생성" .- SHARED
+    APP --> APP_TGW
+    APP_TGW --> TGW
+    TGW --> INSP_TGW
+    INSP_TGW --> NFW
+    NFW --> TGW
+    TGW --> SHARED_TGW
+    SHARED_TGW --> SHARED
 ```
 
 ## 2. 실습 목표
 
 | 구분 | 결과 |
 | --- | --- |
-| Terraform 준비 직후 | 두 VPC 사이 통신 차단 |
-| 수강생 작업 1 | VPC Peering 생성 및 수락 |
-| 수강생 작업 2 | 양쪽 Route Table에 상대 VPC CIDR 경로 추가 |
-| 수강생 작업 3 | 양쪽 EC2 Security Group에 상대 VPC CIDR의 ICMP 허용 |
+| Terraform 준비 직후 | App VPC와 Shared VPC 사이 통신 차단 |
+| 수강생 작업 1 | Transit Gateway 생성 |
+| 수강생 작업 2 | App, Shared, Inspection VPC attachment 생성 |
+| 수강생 작업 3 | TGW route table association과 route 구성 |
+| 수강생 작업 4 | Inspection VPC에 AWS Network Firewall 생성 |
+| 수강생 작업 5 | VPC route table에서 TGW와 firewall endpoint 경로 구성 |
 | 최종 테스트 | App EC2와 Shared EC2 간 private IP ping 성공 |
 | 접속 방식 | Public IP 없이 SSM Session Manager 사용 |
 
-이 랩에서 방화벽은 EC2 인스턴스에 연결된 Security Group을 의미합니다. Network ACL은 기본 허용 상태를 유지하고, 수강생은 Security Group 인바운드 규칙만 수정합니다.
+EC2 Security Group은 ICMP 테스트가 가능하도록 Terraform에서 미리 열어 둡니다. 이 실습의 방화벽은 Security Group이 아니라 중간 경로에 삽입되는 AWS Network Firewall입니다.
 
 ## 3. Terraform 준비 리소스
 
 | 리소스 | 구성 |
 | --- | --- |
-| VPC | App VPC 1개, Shared VPC 1개 |
-| Subnet | VPC별 private subnet 1개 |
-| Route Table | VPC별 private route table 1개 |
-| Security Group | VPC별 테스트 인스턴스용 SG 1개, SSM Endpoint용 SG 1개 |
-| VPC Endpoint | VPC별 `ssm`, `ssmmessages`, `ec2messages` interface endpoint |
-| EC2 | VPC별 SSM 테스트 인스턴스 1대 |
+| VPC | App, Shared, Inspection |
+| Subnet | App/Shared private subnet, App/Shared TGW attachment subnet, Inspection firewall subnet, Inspection TGW attachment subnet |
+| Route Table | Workload private RT, Workload TGW attachment RT, Inspection firewall RT, Inspection TGW attachment RT |
+| VPC Endpoint | App/Shared VPC에 SSM interface endpoint |
+| EC2 | App/Shared VPC에 SSM 테스트 인스턴스 |
 | IAM | SSM Session Manager용 instance profile |
 
 ## 4. 강사용 준비
@@ -57,51 +79,154 @@ make plan LAB=terraform/fa01hc/day03-compute-and-network-security/08-vpc-peering
 
 | Output | 용도 |
 | --- | --- |
-| `vpc_ids` | Peering 생성 시 requester/accepter VPC 선택 |
-| `cidr_blocks` | Route Table과 Security Group 규칙 입력 |
-| `route_table_ids` | Peering route를 추가할 대상 |
-| `security_group_ids` | ICMP inbound rule을 추가할 대상 |
+| `vpc_ids` | TGW attachment와 Network Firewall 생성 대상 VPC 확인 |
+| `cidr_blocks` | Firewall rule group과 route table 입력 |
+| `workload_subnet_ids` | App/Shared EC2 private subnet 확인 |
+| `workload_tgw_subnet_ids` | App/Shared TGW attachment subnet 선택 |
+| `inspection_subnet_ids` | Inspection TGW attachment subnet과 firewall subnet 선택 |
+| `route_table_ids` | 수동 route 추가 대상 VPC route table |
+| `suggested_console_names` | 수강생이 콘솔에서 만들 리소스 추천 이름 |
 | `instance_ids` | SSM Session Manager 접속 대상 |
 | `private_ips` | ping 테스트 대상 IP |
 
 ## 5. 수강생 실습
 
-### 5.1 VPC Peering 생성
+### 5.1 Transit Gateway 생성
 
 1. AWS 콘솔에서 **VPC** 서비스로 이동합니다.
-2. 왼쪽 메뉴에서 **Peering connections**를 선택합니다.
-3. **Create peering connection**을 선택합니다.
-4. Name tag에 `fa01hc-vpc-peering-console-app-to-shared`를 입력합니다.
-5. VPC requester에서 `app` VPC ID를 선택합니다.
-6. Account는 **My account**, Region은 **This Region**을 선택합니다.
-7. VPC accepter에서 `shared` VPC ID를 선택합니다.
-8. Peering connection을 생성합니다.
-9. 생성된 Peering connection을 선택하고 **Actions > Accept request**를 선택합니다.
-10. 상태가 `Active`가 될 때까지 기다립니다.
+2. 왼쪽 메뉴에서 **Transit gateways**를 선택합니다.
+3. **Create transit gateway**를 선택합니다.
+4. 이름은 `suggested_console_names.tgw` 값을 사용합니다.
+5. **Default route table association**을 비활성화합니다.
+6. **Default route table propagation**을 비활성화합니다.
+7. DNS support는 활성화 상태로 둡니다.
+8. Transit Gateway를 생성하고 상태가 `Available`이 될 때까지 기다립니다.
 
-### 5.2 Route Table 경로 추가
+### 5.2 TGW VPC Attachment 생성
 
-왼쪽 메뉴에서 **Route tables**를 선택하고 Terraform output의 `route_table_ids` 값을 기준으로 두 route table을 수정합니다.
+왼쪽 메뉴에서 **Transit gateway attachments**를 선택하고 아래 3개 attachment를 생성합니다.
+
+| Attachment | VPC | Subnet | Appliance mode |
+| --- | --- | --- | --- |
+| `suggested_console_names.tgw_app_attachment` | `vpc_ids.app` | `workload_tgw_subnet_ids.app` | 비활성화 |
+| `suggested_console_names.tgw_shared_attachment` | `vpc_ids.shared` | `workload_tgw_subnet_ids.shared` | 비활성화 |
+| `suggested_console_names.tgw_inspection_attachment` | `vpc_ids.inspection` | `inspection_subnet_ids.tgw` | 활성화 |
+
+Inspection attachment에는 반드시 **Appliance mode support**를 활성화합니다. 중앙 방화벽 구조에서는 요청과 응답이 같은 방화벽 경로를 타야 하므로 이 설정이 중요합니다.
+
+### 5.3 TGW Route Table 생성과 Association
+
+왼쪽 메뉴에서 **Transit gateway route tables**를 선택하고 아래 2개 route table을 생성합니다.
+
+| TGW Route Table | 용도 |
+| --- | --- |
+| `suggested_console_names.tgw_from_workloads_rt` | App/Shared VPC에서 출발한 트래픽을 Inspection VPC로 전달 |
+| `suggested_console_names.tgw_from_inspection_rt` | Inspection VPC에서 돌아온 트래픽을 목적지 VPC로 전달 |
+
+두 route table의 상태가 `Available`이 된 뒤 association을 진행합니다.
+
+Route table association은 아래처럼 구성합니다.
+
+| TGW Route Table | Associate attachment |
+| --- | --- |
+| `suggested_console_names.tgw_from_workloads_rt` | App attachment, Shared attachment |
+| `suggested_console_names.tgw_from_inspection_rt` | Inspection attachment |
+
+### 5.4 Network Firewall Rule Group 생성
+
+1. 왼쪽 메뉴에서 **Network Firewall > Network Firewall rule groups**를 선택합니다.
+2. **Create Network Firewall rule group**을 선택합니다.
+3. Rule group type은 **Stateless rule group**을 선택합니다.
+4. 이름은 `suggested_console_names.firewall_rule_group` 값을 사용합니다.
+5. Capacity는 `100`으로 입력합니다.
+6. Stateless rule을 추가합니다.
+
+| 항목 | 값 |
+| --- | --- |
+| Priority | `100` |
+| Protocol | `ICMP` |
+| Source | `10.30.0.0/16`, `10.40.0.0/16` |
+| Destination | `10.30.0.0/16`, `10.40.0.0/16` |
+| Action | `Pass` |
+
+이 규칙은 App VPC와 Shared VPC 사이 ICMP 테스트 트래픽만 통과시키는 단순 규칙입니다.
+
+### 5.5 Firewall Policy 생성
+
+1. 왼쪽 메뉴에서 **Network Firewall > Firewall policies**를 선택합니다.
+2. **Create firewall policy**를 선택합니다.
+3. 이름은 `suggested_console_names.firewall_policy` 값을 사용합니다.
+4. Stateless rule group에 앞에서 만든 rule group을 추가합니다.
+5. Stateless default actions는 **Drop**으로 둡니다.
+6. Stateless fragment default actions도 **Drop**으로 둡니다.
+
+### 5.6 Network Firewall 생성
+
+1. 왼쪽 메뉴에서 **Network Firewall > Firewalls**를 선택합니다.
+2. **Create firewall**을 선택합니다.
+3. 이름은 `suggested_console_names.network_firewall` 값을 사용합니다.
+4. VPC는 `vpc_ids.inspection` 값을 가진 Inspection VPC를 선택합니다.
+5. Firewall policy는 앞에서 만든 policy를 선택합니다.
+6. Subnet mapping에는 `inspection_subnet_ids.firewall` 값을 가진 firewall subnet을 선택합니다.
+7. Firewall을 생성하고 상태가 `Ready`가 될 때까지 기다립니다.
+8. Firewall 상세 화면에서 AZ별 **Endpoint ID**를 확인합니다. 이후 VPC route table에서 firewall endpoint target으로 사용합니다.
+
+## 6. 라우팅 구성
+
+라우팅은 반드시 양방향으로 맞아야 합니다. 아래 표의 모든 경로를 추가합니다.
+
+### 6.1 Workload VPC Private Route Table
 
 | Route Table | Destination | Target |
 | --- | --- | --- |
-| App private route table | `10.40.0.0/16` | 생성한 VPC Peering connection |
-| Shared private route table | `10.30.0.0/16` | 생성한 VPC Peering connection |
+| `route_table_ids.app_private` | `10.40.0.0/16` | 수강생이 만든 Transit Gateway |
+| `route_table_ids.shared_private` | `10.30.0.0/16` | 수강생이 만든 Transit Gateway |
 
-각 route table에서 **Routes > Edit routes > Add route**를 선택해 위 경로를 추가합니다.
+### 6.2 TGW Workload Route Table
 
-### 5.3 Security Group 방화벽 규칙 추가
+`suggested_console_names.tgw_from_workloads_rt`에 다음 route를 추가합니다.
 
-왼쪽 메뉴에서 **Security Groups**를 선택하고 Terraform output의 `security_group_ids` 값을 기준으로 두 Security Group을 수정합니다.
+| Destination | Target attachment |
+| --- | --- |
+| `10.30.0.0/16` | Inspection attachment |
+| `10.40.0.0/16` | Inspection attachment |
 
-| Security Group | Type | Source |
-| --- | --- | --- |
-| App instance SG | All ICMP - IPv4 | `10.40.0.0/16` |
-| Shared instance SG | All ICMP - IPv4 | `10.30.0.0/16` |
+Workload에서 다른 Workload로 향하는 트래픽은 먼저 Inspection VPC attachment로 보내야 합니다.
 
-각 Security Group에서 **Inbound rules > Edit inbound rules > Add rule**을 선택해 위 규칙을 추가합니다.
+### 6.3 Inspection VPC TGW Attachment Subnet Route Table
 
-### 5.4 SSM Session Manager로 테스트
+`route_table_ids.inspection_tgw`에 다음 route를 추가합니다.
+
+| Destination | Target |
+| --- | --- |
+| `10.30.0.0/16` | Network Firewall endpoint ID |
+| `10.40.0.0/16` | Network Firewall endpoint ID |
+
+이 단계가 중간 방화벽 삽입의 핵심입니다. TGW attachment subnet으로 들어온 트래픽을 바로 TGW로 되돌리지 않고 Network Firewall endpoint로 보냅니다.
+
+### 6.4 Inspection VPC Firewall Subnet Route Table
+
+`route_table_ids.inspection_firewall`에 다음 route를 추가합니다.
+
+| Destination | Target |
+| --- | --- |
+| `10.30.0.0/16` | 수강생이 만든 Transit Gateway |
+| `10.40.0.0/16` | 수강생이 만든 Transit Gateway |
+
+Firewall을 통과한 트래픽은 다시 Transit Gateway로 보내야 최종 목적지 VPC attachment로 전달됩니다.
+
+### 6.5 TGW Inspection Route Table
+
+`suggested_console_names.tgw_from_inspection_rt`에 다음 route를 추가합니다.
+
+| Destination | Target attachment |
+| --- | --- |
+| `10.30.0.0/16` | App attachment |
+| `10.40.0.0/16` | Shared attachment |
+
+Inspection VPC에서 TGW로 돌아온 트래픽은 목적지 Workload VPC attachment로 보내야 합니다.
+
+## 7. 통신 테스트
 
 1. AWS 콘솔에서 **Systems Manager** 서비스로 이동합니다.
 2. 왼쪽 메뉴에서 **Session Manager**를 선택합니다.
@@ -115,29 +240,38 @@ ping -c 3 <shared-private-ip>
 
 정상이라면 `3 packets transmitted, 3 received` 형태가 출력됩니다.
 
-반대 방향도 확인하려면 Shared 인스턴스에 접속해 App 인스턴스의 private IP로 ping을 실행합니다.
+반대 방향도 확인합니다.
 
 ```bash
 ping -c 3 <app-private-ip>
 ```
 
-## 6. 문제 해결
+## 8. 문제 해결
 
 | 증상 | 확인할 항목 |
 | --- | --- |
-| Session Manager 대상이 보이지 않음 | EC2가 running 상태인지, SSM Agent가 Online인지 2~5분 기다린 뒤 재확인 |
-| ping timeout | Peering 상태가 `Active`인지 확인 |
-| ping timeout | 양쪽 Route Table에 상대 VPC CIDR 경로가 있는지 확인 |
-| ping timeout | 양쪽 Security Group inbound rule에 상대 VPC CIDR ICMP 허용이 있는지 확인 |
-| Route 추가 시 target 선택 불가 | Peering connection이 아직 `Active`인지 확인 |
+| Session Manager 대상이 보이지 않음 | EC2 running 상태와 SSM Agent Online 상태 확인 |
+| TGW attachment가 route target으로 보이지 않음 | Attachment 상태가 `Available`인지 확인 |
+| Network Firewall endpoint를 route target으로 선택할 수 없음 | Firewall 상태가 `Ready`인지 확인 |
+| ping timeout | Workload private route table이 TGW를 가리키는지 확인 |
+| ping timeout | TGW Workload route table이 Inspection attachment를 가리키는지 확인 |
+| ping timeout | Inspection TGW attachment subnet route table이 Firewall endpoint를 가리키는지 확인 |
+| ping timeout | Inspection Firewall subnet route table이 TGW를 가리키는지 확인 |
+| ping timeout | TGW Inspection route table이 App/Shared attachment를 가리키는지 확인 |
+| 한 방향만 성공 | 반대 방향 라우팅이 누락되었는지 확인 |
 
-## 7. 정리
+## 9. 정리
 
 수강생이 콘솔에서 만든 항목은 Terraform state에 없으므로 먼저 콘솔에서 삭제합니다.
 
-1. 양쪽 Route Table에서 Peering route 삭제
-2. 양쪽 Security Group에서 ICMP inbound rule 삭제
-3. VPC Peering connection 삭제
+1. VPC route table에서 수동 추가 route 삭제
+2. TGW route table에서 수동 추가 route 삭제
+3. TGW route table association 해제
+4. TGW VPC attachment 삭제
+5. Transit Gateway 삭제
+6. Network Firewall 삭제
+7. Firewall policy 삭제
+8. Firewall rule group 삭제
 
 그 다음 강사가 Terraform 리소스를 삭제합니다.
 
@@ -145,11 +279,12 @@ ping -c 3 <app-private-ip>
 terraform destroy
 ```
 
-## 8. 실습 포인트
+## 10. 실습 포인트
 
 | 포인트 | 설명 |
 | --- | --- |
-| CIDR 중복 방지 | VPC Peering은 CIDR이 겹치면 라우팅할 수 없습니다. |
-| 양방향 라우팅 | Peering은 연결만으로 통신되지 않고 양쪽 Route Table 경로가 필요합니다. |
-| Security Group | 라우팅이 맞아도 인스턴스 방화벽이 막으면 통신되지 않습니다. |
-| Private 통신 | Public IP 없이 VPC 간 private IP로 통신합니다. |
+| VPC Peering 한계 | Peering은 transitive routing을 지원하지 않아 중간 방화벽 VPC 경유 구조를 만들 수 없습니다. |
+| TGW 직접 구성 | TGW, attachment, TGW route table을 수강생이 직접 만들면서 중앙 라우팅 구조를 이해합니다. |
+| TGW Appliance Mode | Inspection VPC attachment에는 appliance mode를 켜서 대칭 경로를 유지합니다. |
+| 방화벽 삽입 | TGW attachment subnet route table이 Network Firewall endpoint를 가리켜야 실제 경로에 방화벽이 들어갑니다. |
+| 양방향 라우팅 | 요청과 응답 방향 모두 같은 inspection 경로를 통과해야 합니다. |
