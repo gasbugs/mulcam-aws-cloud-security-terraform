@@ -1,14 +1,38 @@
-output "app_vpc_id" {
-  description = "ID of the app VPC."
-  value       = aws_vpc.app.id
+output "connectivity_expectations" {
+  description = "Expected connectivity matrix for hub and spoke traffic."
+  value       = local.connectivity_expectations
 }
 
-output "peering_connection_id" {
-  description = "ID of the VPC peering connection."
-  value       = aws_vpc_peering_connection.main.id
+output "instance_ids" {
+  description = "EC2 instance IDs used for SSM connectivity tests."
+  value = {
+    for name, instance in aws_instance.this : name => instance.id
+  }
 }
 
-output "shared_vpc_id" {
-  description = "ID of the shared services VPC."
-  value       = aws_vpc.shared.id
+output "private_ips" {
+  description = "Private IP addresses used in ICMP connectivity tests."
+  value = {
+    for name, instance in aws_instance.this : name => instance.private_ip
+  }
+}
+
+output "tgw_id" {
+  description = "ID of the Transit Gateway hub."
+  value       = aws_ec2_transit_gateway.main.id
+}
+
+output "tgw_route_table_ids" {
+  description = "Transit Gateway route table IDs for hub-originated and spoke-originated traffic."
+  value = {
+    from_hub    = aws_ec2_transit_gateway_route_table.from_hub.id
+    from_spokes = aws_ec2_transit_gateway_route_table.from_spokes.id
+  }
+}
+
+output "vpc_ids" {
+  description = "VPC IDs for the hub and spoke networks."
+  value = {
+    for name, vpc in aws_vpc.this : name => vpc.id
+  }
 }
