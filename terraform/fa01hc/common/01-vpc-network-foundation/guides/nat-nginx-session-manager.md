@@ -1,110 +1,208 @@
 # NAT Gateway 구성해서 nginx 설치하기
 
-이 문서는 `terraform/fa01hc/common/01-vpc-network-foundation`에서 만든 NAT Gateway 경로를 확인하고, private EC2에 Session Manager로 접속해 nginx를 설치하는 실습 가이드입니다.
+이 가이드는 Terraform이 만든 기본 VPC에서 수강생이 NAT Gateway와 private route를 직접 추가한 뒤, Session Manager로 private EC2에 접속해 nginx를 설치하는 실습입니다.
 
-private EC2에는 public IP가 없습니다. 인터넷으로 직접 나가지 않고 private route table의 기본 경로를 통해 NAT Gateway로 outbound 통신합니다.
+Terraform 기본 구성에는 NAT Gateway와 Session Manager IAM role이 없습니다. 이 가이드에서 필요한 리소스를 직접 만들고 마지막에 삭제합니다.
 
 ## 목표
 
 | 항목 | 내용 |
 | --- | --- |
-| 접속 방식 | Session Manager shell |
-| 테스트 대상 | Amazon Linux 2023 private EC2 |
-| 확인 내용 | Private subnet outbound 경로, NAT Gateway, nginx 설치 |
+| 기본 준비 | VPC, public/private subnet, private EC2, SSH key |
+| 직접 구성 | Elastic IP, NAT Gateway, private route, EC2 SSM IAM role/profile |
+| 검증 | private EC2에서 `dnf install nginx` 성공 |
 | 리전 | `us-east-1` |
 
-## 1. Terraform 구성 적용
+## 1. 저장소 clone 및 기본 VPC 생성
 
-기본 `terraform.tfvars`에서 NAT Gateway가 켜져 있는지 확인합니다.
-
-```hcl
-enable_nat_gateway       = true
-enable_ssm_instance      = true
-enable_ssm_vpc_endpoints = false
-```
-
-프로젝트 루트에서 실행합니다.
+로컬 PC 또는 WSL에 AWS CLI v2와 Session Manager plugin이 설치되어 있어야 합니다.
 
 ```bash
-terraform -chdir=terraform/fa01hc/common/01-vpc-network-foundation init
-terraform -chdir=terraform/fa01hc/common/01-vpc-network-foundation apply
+aws --version
+session-manager-plugin
 ```
 
-## 2. 출력값 확인
+`session-manager-plugin` 명령이 없으면 먼저 설치합니다.
 
 ```bash
-cd terraform/fa01hc/common/01-vpc-network-foundation
+git clone https://github.com/gasbugs/mulcam-aws-cloud-security-terraform.git
+cd mulcam-aws-cloud-security-terraform
+
+REPO_DIR=$(pwd)
+LAB_DIR=terraform/fa01hc/common/01-vpc-network-foundation
+
+terraform -chdir="$LAB_DIR" init
+terraform -chdir="$LAB_DIR" apply
+cd "$LAB_DIR"
+```
+
+필요한 값을 변수로 저장합니다.
+
+```bash
+PROJECT_NAME=fa01hc-vpc-network-foundation
+REGION=us-east-1
 
 INSTANCE_ID=$(terraform output -raw private_instance_id)
-NAT_ID=$(terraform output -raw nat_gateway_id)
+VPC_ID=$(terraform output -raw vpc_id)
 
-terraform output private_instance_private_ip
-terraform output private_route_table_ids
-terraform output public_route_table_id
+PUBLIC_SUBNET_ID=$(aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Tier,Values=public" \
+  --query "Subnets[0].SubnetId" \
+  --output text \
+  --region "$REGION")
+
+PRIVATE_ROUTE_TABLE_IDS=($(aws ec2 describe-route-tables \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Tier,Values=private" \
+  --query "RouteTables[].RouteTableId" \
+  --output text \
+  --region "$REGION"))
 ```
 
-Windows PowerShell에서는 다음처럼 저장합니다.
+## 2. NAT Gateway 생성
 
-```powershell
-$INSTANCE_ID = terraform output -raw private_instance_id
-$NAT_ID = terraform output -raw nat_gateway_id
-```
-
-## 3. 콘솔에서 NAT Gateway 경로 확인
-
-AWS Console에서 `us-east-1` 리전을 선택하고 VPC 콘솔로 이동합니다.
-
-| 화면 | 확인할 내용 |
-| --- | --- |
-| NAT Gateways | `fa01hc-vpc-network-foundation-nat` 상태가 `Available`인지 확인 |
-| Elastic IPs | NAT Gateway에 Elastic IP가 연결되어 있는지 확인 |
-| Route tables | private route table에 `0.0.0.0/0 -> nat-...` 경로가 있는지 확인 |
-| Subnets | NAT Gateway는 public subnet, EC2는 private subnet에 있는지 확인 |
-| EC2 Instances | private EC2에 public IPv4 address가 없는지 확인 |
-
-AWS CLI로 확인하려면 다음 명령을 사용합니다.
+Elastic IP를 할당합니다.
 
 ```bash
-aws ec2 describe-nat-gateways \
+ALLOCATION_ID=$(aws ec2 allocate-address \
+  --domain vpc \
+  --query AllocationId \
+  --output text \
+  --region "$REGION")
+
+echo "$ALLOCATION_ID"
+```
+
+public subnet에 NAT Gateway를 생성합니다.
+
+```bash
+NAT_ID=$(aws ec2 create-nat-gateway \
+  --subnet-id "$PUBLIC_SUBNET_ID" \
+  --allocation-id "$ALLOCATION_ID" \
+  --tag-specifications "ResourceType=natgateway,Tags=[{Key=Name,Value=$PROJECT_NAME-nat},{Key=Course,Value=FA01HC},{Key=Unit,Value=vpc-network-foundation}]" \
+  --query NatGateway.NatGatewayId \
+  --output text \
+  --region "$REGION")
+
+aws ec2 wait nat-gateway-available \
   --nat-gateway-ids "$NAT_ID" \
-  --query "NatGateways[0].{State:State,SubnetId:SubnetId,PublicIp:NatGatewayAddresses[0].PublicIp}" \
-  --output table \
-  --region us-east-1
+  --region "$REGION"
 ```
 
-private EC2에 public IP가 없는지도 확인합니다.
+private route table에 기본 경로를 추가합니다.
 
 ```bash
-aws ec2 describe-instances \
-  --instance-ids "$INSTANCE_ID" \
-  --query "Reservations[0].Instances[0].{PrivateIp:PrivateIpAddress,PublicIp:PublicIpAddress,SubnetId:SubnetId}" \
-  --output table \
-  --region us-east-1
+for ROUTE_TABLE_ID in "${PRIVATE_ROUTE_TABLE_IDS[@]}"; do
+  aws ec2 create-route \
+    --route-table-id "$ROUTE_TABLE_ID" \
+    --destination-cidr-block 0.0.0.0/0 \
+    --nat-gateway-id "$NAT_ID" \
+    --region "$REGION"
+done
 ```
 
-## 4. Session Manager로 EC2 접속
+## 3. Session Manager용 IAM role 연결
+
+NAT 경로가 생겼으므로 private EC2는 public SSM endpoint로 outbound HTTPS 통신할 수 있습니다. 이제 EC2에 SSM 권한을 붙입니다.
+
+```bash
+ROLE_NAME="$PROJECT_NAME-ssm-role"
+PROFILE_NAME="$PROJECT_NAME-ssm-instance-profile"
+
+TRUST_POLICY_JSON='{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}'
+
+aws iam create-role \
+  --role-name "$ROLE_NAME" \
+  --assume-role-policy-document "$TRUST_POLICY_JSON"
+
+aws iam attach-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+aws iam create-instance-profile \
+  --instance-profile-name "$PROFILE_NAME"
+
+aws iam add-role-to-instance-profile \
+  --instance-profile-name "$PROFILE_NAME" \
+  --role-name "$ROLE_NAME"
+
+sleep 15
+
+ASSOCIATION_ID=$(aws ec2 associate-iam-instance-profile \
+  --instance-id "$INSTANCE_ID" \
+  --iam-instance-profile "Name=$PROFILE_NAME" \
+  --query IamInstanceProfileAssociation.AssociationId \
+  --output text \
+  --region "$REGION")
+```
+
+EC2가 새 instance profile과 NAT 경로를 확실히 인식하도록 한 번 재부팅합니다.
+
+```bash
+aws ec2 reboot-instances \
+  --instance-ids "$INSTANCE_ID" \
+  --region "$REGION"
+
+aws ec2 wait instance-status-ok \
+  --instance-ids "$INSTANCE_ID" \
+  --region "$REGION"
+```
+
+SSM online 상태를 확인합니다.
+
+```bash
+for i in {1..24}; do
+  STATUS=$(aws ssm describe-instance-information \
+    --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+    --query "InstanceInformationList[0].PingStatus" \
+    --output text \
+    --region "$REGION")
+
+  echo "$STATUS"
+
+  if [ "$STATUS" = "Online" ]; then
+    break
+  fi
+
+  sleep 15
+done
+```
+
+`Online`이 아니면 1분 뒤 다시 확인합니다.
+
+`Online`으로 바뀐 직후에는 명령/세션 채널이 아직 준비 중일 수 있으므로 60초 정도 더 기다립니다.
+
+```bash
+sleep 60
+```
+
+## 4. Session Manager로 접속
 
 ```bash
 aws ssm start-session \
   --target "$INSTANCE_ID" \
-  --region us-east-1
-```
-
-접속 후 EC2 내부에서 Amazon Linux 2023인지 확인합니다.
-
-```bash
-cat /etc/os-release
+  --region "$REGION"
 ```
 
 ## 5. NAT Gateway outbound 테스트
 
-EC2 내부에서 외부 HTTPS 호출을 실행합니다.
+EC2 내부에서 실행합니다.
 
 ```bash
 curl -s https://checkip.amazonaws.com
 ```
 
-출력되는 IP는 private EC2의 IP가 아니라 NAT Gateway의 Elastic IP입니다. 이 값이 보이면 private subnet에서 NAT Gateway를 통해 인터넷 outbound 통신이 되는 상태입니다.
+출력되는 IP는 NAT Gateway의 Elastic IP입니다. private EC2가 NAT Gateway를 통해 인터넷으로 나간다는 뜻입니다.
 
 ## 6. nginx 설치 및 실행
 
@@ -115,50 +213,70 @@ sudo dnf clean all
 sudo dnf install -y nginx
 sudo systemctl enable --now nginx
 systemctl status nginx --no-pager
-```
-
-EC2 내부에서 로컬 루프백으로 nginx 응답을 확인합니다.
-
-```bash
 curl -I http://127.0.0.1
+exit
 ```
 
-`HTTP/1.1 200 OK` 또는 `HTTP/1.1 403 Forbidden`이 보이면 nginx가 실행 중입니다. 기본 페이지 파일 권한이나 index 파일 상태에 따라 상태 코드는 달라질 수 있지만, nginx 서버가 응답하면 실습 목적은 달성한 것입니다.
+`HTTP/1.1 200 OK` 또는 `HTTP/1.1 403 Forbidden`이 보이면 nginx가 응답하는 상태입니다.
 
-## 7. 왜 브라우저에서 바로 열리지 않는가
+## 7. 정리
 
-이 EC2는 private subnet에 있고 public IP가 없습니다. 보안 그룹도 외부 인터넷 inbound를 허용하지 않습니다. 따라서 수강생 PC 브라우저에서 `http://<private-ip>`로 바로 접근할 수 없습니다.
-
-웹 접속까지 확인하려면 다음 중 하나가 필요합니다.
-
-| 방법 | 설명 |
-| --- | --- |
-| Session Manager port forwarding | 로컬 포트를 EC2의 80번 포트로 전달 |
-| Client VPN | 수강생 PC를 VPC 내부 경로에 연결 |
-| Load Balancer | public ALB를 별도로 구성 |
-
-이 실습에서는 NAT Gateway outbound와 패키지 설치 확인이 목표입니다.
-
-## 8. nginx 정리
-
-EC2 내부에서 nginx만 제거하려면 다음 명령을 사용합니다.
+직접 만든 리소스를 먼저 삭제합니다.
 
 ```bash
-sudo systemctl disable --now nginx
-sudo dnf remove -y nginx
+aws ec2 disassociate-iam-instance-profile \
+  --association-id "$ASSOCIATION_ID" \
+  --region "$REGION"
+
+sleep 30
+
+for ROUTE_TABLE_ID in "${PRIVATE_ROUTE_TABLE_IDS[@]}"; do
+  aws ec2 delete-route \
+    --route-table-id "$ROUTE_TABLE_ID" \
+    --destination-cidr-block 0.0.0.0/0 \
+    --region "$REGION"
+done
+
+aws ec2 delete-nat-gateway \
+  --nat-gateway-id "$NAT_ID" \
+  --region "$REGION"
+
+aws ec2 wait nat-gateway-deleted \
+  --nat-gateway-ids "$NAT_ID" \
+  --region "$REGION"
+
+aws ec2 release-address \
+  --allocation-id "$ALLOCATION_ID" \
+  --region "$REGION"
+
+aws iam remove-role-from-instance-profile \
+  --instance-profile-name "$PROFILE_NAME" \
+  --role-name "$ROLE_NAME"
+
+aws iam delete-instance-profile \
+  --instance-profile-name "$PROFILE_NAME"
+
+aws iam detach-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+aws iam delete-role \
+  --role-name "$ROLE_NAME"
 ```
 
-전체 AWS 리소스를 정리하려면 로컬 터미널에서 Terraform destroy를 실행합니다.
+마지막으로 Terraform 리소스를 삭제합니다.
 
 ```bash
-terraform -chdir=terraform/fa01hc/common/01-vpc-network-foundation destroy
+cd "$REPO_DIR"
+terraform -chdir="$LAB_DIR" destroy
 ```
 
-## 9. 문제 해결
+## 문제 해결
 
 | 증상 | 확인할 내용 |
 | --- | --- |
-| `dnf install`이 실패함 | NAT Gateway 상태가 `Available`인지, private route table의 `0.0.0.0/0` 경로가 NAT Gateway인지 확인합니다. |
-| `curl https://checkip.amazonaws.com` 실패 | 보안 그룹 egress, NAT Gateway, public route table의 Internet Gateway 경로를 확인합니다. |
-| Session Manager 접속 실패 | EC2 IAM role에 `AmazonSSMManagedInstanceCore`가 붙어 있는지, SSM Agent가 online인지 확인합니다. |
-| 브라우저에서 nginx가 안 열림 | 정상입니다. EC2는 public inbound를 열지 않는 private 서버입니다. |
+| NAT Gateway 생성이 오래 걸림 | `aws ec2 wait nat-gateway-available` 완료까지 몇 분 걸릴 수 있습니다. |
+| `create-route`가 실패함 | private route table에 이미 `0.0.0.0/0` 경로가 있는지 확인합니다. |
+| Session Manager가 `Online`이 아님 | NAT route, EC2 IAM role, instance profile 연결 상태를 확인합니다. |
+| `dnf install` 실패 | private route table의 기본 경로가 NAT Gateway인지 확인합니다. |
+| Terraform destroy 실패 | NAT Gateway, route, IAM instance profile 같은 수동 리소스를 먼저 지웁니다. |
