@@ -32,9 +32,9 @@ cd mulcam-aws-cloud-security-terraform
 REPO_DIR=$(pwd)
 LAB_DIR=terraform/fa01hc/common/01-vpc-network-foundation
 
-terraform -chdir="$LAB_DIR" init
-terraform -chdir="$LAB_DIR" apply
 cd "$LAB_DIR"
+terraform init
+terraform apply
 ```
 
 필요한 값을 변수로 저장합니다.
@@ -290,8 +290,8 @@ aws acm delete-certificate \
 마지막으로 Terraform 리소스를 삭제합니다.
 
 ```bash
-cd "$REPO_DIR"
-terraform -chdir="$LAB_DIR" destroy
+cd "$REPO_DIR/$LAB_DIR"
+terraform destroy
 ```
 
 ## 문제 해결

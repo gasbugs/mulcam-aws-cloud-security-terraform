@@ -60,10 +60,12 @@ aws sts get-caller-identity
 git clone https://github.com/gasbugs/mulcam-aws-cloud-security-terraform.git
 cd mulcam-aws-cloud-security-terraform
 
+REPO_DIR=$(pwd)
 LAB_DIR=terraform/fa01hc/common/01-vpc-network-foundation
 
-terraform -chdir="$LAB_DIR" init
-terraform -chdir="$LAB_DIR" apply
+cd "$LAB_DIR"
+terraform init
+terraform apply
 ```
 
 `terraform apply`가 생성 계획을 보여주면 `yes`를 입력합니다.
@@ -74,16 +76,16 @@ terraform -chdir="$LAB_DIR" apply
 cd mulcam-aws-cloud-security-terraform
 git pull
 
+REPO_DIR=$(pwd)
 LAB_DIR=terraform/fa01hc/common/01-vpc-network-foundation
-terraform -chdir="$LAB_DIR" init
-terraform -chdir="$LAB_DIR" apply
+cd "$LAB_DIR"
+terraform init
+terraform apply
 ```
 
 생성 후 주요 출력값을 확인합니다.
 
 ```bash
-cd terraform/fa01hc/common/01-vpc-network-foundation
-
 terraform output vpc_id
 terraform output private_subnet_ids
 terraform output public_subnet_ids
@@ -119,5 +121,6 @@ terraform output ssh_private_key_file
 각 가이드에서 직접 만든 NAT Gateway, SSM endpoint, Client VPN endpoint 같은 수동 리소스를 먼저 삭제합니다. 그 다음 Terraform 리소스를 삭제합니다.
 
 ```bash
-terraform -chdir=terraform/fa01hc/common/01-vpc-network-foundation destroy
+cd "$REPO_DIR/$LAB_DIR"
+terraform destroy
 ```

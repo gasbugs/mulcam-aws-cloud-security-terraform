@@ -21,7 +21,16 @@ aws sts get-caller-identity
 session-manager-plugin
 ```
 
-`session-manager-plugin` 명령이 없으면 먼저 설치합니다.
+Ubuntu 또는 WSL에서 `session-manager-plugin` 명령이 없으면 먼저 설치합니다.
+
+```bash
+curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+  -o "session-manager-plugin.deb"
+
+sudo dpkg -i session-manager-plugin.deb
+
+session-manager-plugin
+```
 
 ```bash
 git clone https://github.com/gasbugs/mulcam-aws-cloud-security-terraform.git
@@ -30,9 +39,9 @@ cd mulcam-aws-cloud-security-terraform
 REPO_DIR=$(pwd)
 LAB_DIR=terraform/fa01hc/common/01-vpc-network-foundation
 
-terraform -chdir="$LAB_DIR" init
-terraform -chdir="$LAB_DIR" apply
 cd "$LAB_DIR"
+terraform init
+terraform apply
 ```
 
 필요한 값을 변수로 저장합니다.
@@ -316,8 +325,8 @@ aws iam delete-role \
 마지막으로 Terraform 리소스를 삭제합니다.
 
 ```bash
-cd "$REPO_DIR"
-terraform -chdir="$LAB_DIR" destroy
+cd "$REPO_DIR/$LAB_DIR"
+terraform destroy
 ```
 
 ## 문제 해결
