@@ -5,7 +5,7 @@ variable "aws_profile" {
 }
 
 variable "aws_region" {
-  description = "AWS region for the Network Firewall inspection console workshop."
+  description = "AWS region for the Network Firewall inspection CLI workshop."
   type        = string
   default     = "us-east-1"
 }
@@ -19,5 +19,5 @@ variable "instance_type" {
 variable "project_name" {
   description = "Project name used in resource names and tags."
   type        = string
-  default     = "fa01hc-inspection-firewall-console"
+  default     = "fa01hc-inspection-firewall-cli"
 }

@@ -4,7 +4,7 @@ locals {
   common_tags = {
     Course    = "FA01HC"
     ManagedBy = "Terraform"
-    Unit      = "inspection-firewall-console"
+    Unit      = "inspection-firewall-cli"
   }
 
   connectivity_expectations = {
@@ -15,7 +15,7 @@ locals {
 
   inspection_vpc_key = "inspection"
 
-  suggested_console_names = {
+  suggested_resource_names = {
     firewall_policy           = "${var.project_name}-policy"
     firewall_rule_group       = "${var.project_name}-allow-icmp-rule-group"
     network_firewall          = "${var.project_name}-firewall"
@@ -26,6 +26,22 @@ locals {
     tgw_inspection_attachment = "${var.project_name}-inspection-tgw-attachment"
     tgw_shared_attachment     = "${var.project_name}-shared-tgw-attachment"
   }
+
+  student_cli_checklist = [
+    "Create a Transit Gateway with default route table association and propagation disabled.",
+    "Create app, shared, and inspection VPC attachments. Enable appliance mode on the inspection attachment.",
+    "Create Transit Gateway route tables for workload-originated and inspection-originated traffic.",
+    "Associate app/shared attachments with the workload TGW route table and the inspection attachment with the inspection TGW route table.",
+    "Create a stateful Network Firewall rule group that passes ICMP between app and shared CIDRs.",
+    "Create a strict-order firewall policy that forwards traffic to the stateful engine and drops unmatched traffic.",
+    "Create AWS Network Firewall in the inspection VPC firewall subnet and read its endpoint ID from describe-firewall.",
+    "Add app/shared private subnet routes to the student-created Transit Gateway.",
+    "Add the workload TGW route table default route to the inspection attachment.",
+    "Add the inspection TGW subnet default route to the Network Firewall endpoint.",
+    "Add the inspection firewall subnet default route back to the student-created Transit Gateway.",
+    "Add inspection TGW route table routes back to app and shared attachments.",
+    "Use SSM Run Command or Session Manager to ping between the private instance IPs.",
+  ]
 
   ssm_services = toset([
     "ec2messages",
