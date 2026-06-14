@@ -19,6 +19,7 @@ The final teaching structure lives under `terraform/fa01hc/` and mirrors the day
 ```text
 terraform/
   fa01hc/
+    common/
     day01-cloud-and-account-security/
     day02-account-and-compute-security/
     day03-compute-and-network-security/
@@ -26,7 +27,7 @@ terraform/
     day05-storage-and-security-services/
 ```
 
-Each Terraform root module is tracked in `terraform-roots.txt`. The final FA01HC day/unit inventory is tracked in `fa01hc-curriculum.json`. The old `labs.json` file is retained only as imported source inventory.
+Each Terraform root module is tracked in `terraform-roots.txt`. Shared instructor foundations live under `terraform/fa01hc/common/`. The final FA01HC day/unit inventory is tracked in `fa01hc-curriculum.json`. The old `labs.json` file is retained only as imported source inventory.
 
 ## Quick Start
 

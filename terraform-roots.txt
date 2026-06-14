@@ -1,3 +1,4 @@
+terraform/fa01hc/common/01-vpc-network-foundation
 terraform/fa01hc/day01-cloud-and-account-security/04-aws-services-overview
 terraform/fa01hc/day01-cloud-and-account-security/05-account-protection-and-access-control
 terraform/fa01hc/day01-cloud-and-account-security/06-iam-basics

@@ -68,6 +68,7 @@ CONFIRM_APPLY_DESTROY=YES make lifecycle-apply-destroy LAB=terraform/fa01hc/day0
 ## 비용 주의 단원
 
 - NAT Gateway: `day03-compute-and-network-security/03-bastion-nat-egress-only-gateway`
+- VPC Foundation NAT/Client VPN: `common/01-vpc-network-foundation`
 - ALB/ASG: `day04-network-and-storage-security/01-load-balancer-autoscaling-availability`
 - RDS/Aurora: `day04-network-and-storage-security/03-aurora-rds-relational-database`
 - ElastiCache: `day04-network-and-storage-security/05-elasticache-caching-server`
