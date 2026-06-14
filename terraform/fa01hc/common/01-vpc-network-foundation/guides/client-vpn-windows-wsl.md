@@ -16,6 +16,15 @@ Terraform 기본 구성에는 Client VPN endpoint가 없습니다.
 
 ## 1. 저장소 clone 및 기본 VPC 생성
 
+로컬 PC 또는 WSL에 AWS CLI v2, Terraform, OpenSSH client가 준비되어 있어야 합니다. 인증서 생성은 WSL 기준으로 진행하고, VPN 연결은 Windows의 AWS VPN Client 또는 OpenVPN client에서 진행합니다.
+
+```bash
+aws --version
+aws sts get-caller-identity
+terraform version
+ssh -V
+```
+
 ```bash
 git clone https://github.com/gasbugs/mulcam-aws-cloud-security-terraform.git
 cd mulcam-aws-cloud-security-terraform
@@ -31,8 +40,10 @@ cd "$LAB_DIR"
 필요한 값을 변수로 저장합니다.
 
 ```bash
+# terraform.tfvars에서 project_name을 변경했다면 아래 값도 같은 값으로 바꿉니다.
 PROJECT_NAME=fa01hc-vpc-network-foundation
 REGION=us-east-1
+export AWS_PAGER=""
 
 VPC_ID=$(terraform output -raw vpc_id)
 VPC_CIDR=$(terraform output -raw vpc_cidr_block)
@@ -51,13 +62,16 @@ chmod 400 "$KEY_FILE"
 
 ## 2. 실습용 인증서 생성
 
-WSL에서 EasyRSA를 사용합니다.
+WSL에서 EasyRSA를 사용합니다. `EASYRSA_BATCH=1`을 사용해 실습 중 대화형 입력을 줄입니다.
 
 ```bash
 sudo apt update
 sudo apt install -y easy-rsa
 make-cadir ~/fa01hc-client-vpn-ca
 cd ~/fa01hc-client-vpn-ca
+
+export EASYRSA_BATCH=1
+export EASYRSA_REQ_CN=fa01hc-client-vpn-ca
 
 ./easyrsa init-pki
 ./easyrsa build-ca nopass
@@ -102,6 +116,8 @@ echo "$CVPN_SG_ID"
 private EC2 security group은 Terraform에서 이미 `172.16.0.0/22` 대역의 ICMP와 SSH를 허용합니다.
 
 ## 5. Client VPN endpoint 생성
+
+Client VPN endpoint도 생성 시간 동안 비용이 발생합니다. 접속 테스트가 끝나면 정리 절차를 반드시 완료합니다.
 
 ```bash
 AUTH_OPTIONS="[{\"Type\":\"certificate-authentication\",\"MutualAuthentication\":{\"ClientRootCertificateChainArn\":\"$SERVER_CERT_ARN\"}}]"
@@ -157,6 +173,13 @@ for i in {1..40}; do
 done
 ```
 
+```bash
+if [ "$ASSOC_STATUS" != "associated" ]; then
+  echo "Client VPN target network association 상태를 확인하세요: $ASSOC_STATUS"
+  exit 1
+fi
+```
+
 VPC CIDR 접근을 허용합니다.
 
 ```bash
@@ -167,7 +190,7 @@ aws ec2 authorize-client-vpn-ingress \
   --region "$REGION"
 ```
 
-콘솔에서 **VPC > Client VPN endpoints**로 이동해 endpoint, association, authorization rule 상태가 available인지 확인합니다.
+콘솔에서 **VPC > Client VPN endpoints**로 이동해 endpoint와 target network association이 available/associated 상태인지, authorization rule이 active 상태인지 확인합니다.
 
 ## 6. Client VPN 설정 파일 생성
 
@@ -214,7 +237,7 @@ SSH로 접속합니다.
 ssh -i C:\path\to\fa01hc-vpc-network-foundation-key.pem ec2-user@<PRIVATE_IP>
 ```
 
-`<PRIVATE_IP>`는 `terraform output -raw private_instance_private_ip` 결과로 바꿔 입력합니다.
+`<PRIVATE_IP>`는 `terraform output -raw private_instance_private_ip` 결과로 바꿔 입력합니다. SSH key가 WSL 안에 있다면 다음 단계처럼 WSL에서 SSH 접속하는 방식을 권장합니다.
 
 ## 8. WSL에서 접속 확인
 

@@ -34,6 +34,24 @@ flowchart LR
 
 Terraform은 NAT Gateway, SSM IAM role, SSM VPC endpoint, Client VPN endpoint를 생성하지 않습니다.
 
+## 실습 전 확인
+
+| 항목 | 확인 |
+| --- | --- |
+| AWS 계정 | 실습 계정의 CLI credential이 설정되어 있어야 합니다. |
+| 리전 | 모든 실습은 `us-east-1`에서 진행합니다. |
+| 로컬 도구 | `git`, `terraform`, `aws` CLI가 필요합니다. |
+| 터미널 | macOS/Linux/WSL의 bash 또는 zsh 기준입니다. PowerShell 명령은 별도로 표시합니다. |
+| 비용 | NAT Gateway와 Client VPN endpoint는 생성 시간 동안 비용이 발생합니다. 실습 후 반드시 정리합니다. |
+
+실습 전 현재 AWS 계정을 확인합니다.
+
+```bash
+aws sts get-caller-identity
+```
+
+여러 수강생이 같은 AWS 계정을 공유한다면 `terraform.tfvars`의 `project_name` 값을 본인 이름이나 번호가 포함된 고유한 값으로 바꾼 뒤 진행합니다. 같은 계정에서 같은 이름을 동시에 사용하면 key pair, IAM role, security group 이름이 충돌할 수 있습니다.
+
 ## 바로 실습하기
 
 수강생은 아래 명령부터 시작합니다.
@@ -47,6 +65,8 @@ LAB_DIR=terraform/fa01hc/common/01-vpc-network-foundation
 terraform -chdir="$LAB_DIR" init
 terraform -chdir="$LAB_DIR" apply
 ```
+
+`terraform apply`가 생성 계획을 보여주면 `yes`를 입력합니다.
 
 이미 clone한 저장소가 있다면 최신 상태로 맞춘 뒤 진행합니다.
 

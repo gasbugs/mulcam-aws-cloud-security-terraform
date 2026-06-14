@@ -13,10 +13,11 @@
 
 ## 1. 저장소 clone 및 기본 VPC 생성
 
-로컬 PC 또는 WSL에 AWS CLI v2와 Session Manager plugin이 설치되어 있어야 합니다.
+로컬 PC 또는 WSL에 AWS CLI v2와 Session Manager plugin이 설치되어 있어야 합니다. 이 가이드의 명령은 bash 또는 zsh 기준입니다.
 
 ```bash
 aws --version
+aws sts get-caller-identity
 session-manager-plugin
 ```
 
@@ -37,8 +38,10 @@ cd "$LAB_DIR"
 필요한 값을 변수로 저장합니다.
 
 ```bash
+# terraform.tfvars에서 project_name을 변경했다면 아래 값도 같은 값으로 바꿉니다.
 PROJECT_NAME=fa01hc-vpc-network-foundation
 REGION=us-east-1
+export AWS_PAGER=""
 
 INSTANCE_ID=$(terraform output -raw private_instance_id)
 VPC_ID=$(terraform output -raw vpc_id)
@@ -82,6 +85,8 @@ aws iam add-role-to-instance-profile \
   --instance-profile-name "$PROFILE_NAME" \
   --role-name "$ROLE_NAME"
 ```
+
+같은 AWS 계정에서 같은 실습을 다시 실행해 `EntityAlreadyExists` 오류가 나면 이전 실습의 정리 절차를 먼저 완료하거나, README 안내에 따라 Terraform의 `project_name`을 고유한 값으로 바꾼 뒤 새로 진행합니다.
 
 instance profile에 role이 반영될 때까지 잠시 기다린 뒤 EC2에 연결합니다.
 
@@ -171,6 +176,11 @@ for i in {1..40}; do
 
   sleep 15
 done
+
+if [[ "$ENDPOINT_STATES" == *"pending"* ]] || [[ "$ENDPOINT_STATES" == *"failed"* ]] || [[ "$ENDPOINT_STATES" == *"rejected"* ]]; then
+  echo "SSM endpoint 상태를 확인하세요: $ENDPOINT_STATES"
+  exit 1
+fi
 ```
 
 EC2가 새 instance profile과 SSM endpoint DNS를 확실히 인식하도록 한 번 재부팅합니다.
@@ -208,6 +218,13 @@ done
 ```
 
 결과가 `Online`이면 접속할 수 있습니다. `None`이나 빈 값이면 1분 뒤 다시 확인합니다.
+
+```bash
+if [ "$STATUS" != "Online" ]; then
+  echo "SSM Agent가 Online 상태가 아닙니다. IAM role, endpoint, security group을 확인하세요."
+  exit 1
+fi
+```
 
 `Online`으로 바뀐 직후에는 명령/세션 채널이 아직 준비 중일 수 있으므로 60초 정도 더 기다립니다.
 
@@ -270,6 +287,8 @@ sleep 30
 aws ec2 delete-vpc-endpoints \
   --vpc-endpoint-ids "${ENDPOINT_IDS[@]}" \
   --region "$REGION"
+
+sleep 30
 
 for i in {1..20}; do
   aws ec2 delete-security-group \
