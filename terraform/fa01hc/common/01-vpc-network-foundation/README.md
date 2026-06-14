@@ -56,6 +56,16 @@ terraform -chdir=terraform/fa01hc/common/01-vpc-network-foundation destroy
 
 NAT Gateway와 Client VPN은 시간당 비용이 발생합니다. 실습 후 반드시 `destroy`합니다.
 
+## 수강생 실습 가이드
+
+이 가이드는 이 Terraform 디렉토리에서 만든 VPC, private EC2, NAT Gateway, Session Manager 구성을 기준으로 진행합니다.
+
+| 실습 | 가이드 |
+| --- | --- |
+| Session Manager 구성 확인 및 SSH 접속 | [Session Manager 구성해서 SSH 접속하기](guides/session-manager-ssh.md) |
+| NAT Gateway 경로 검증 및 nginx 설치 | [NAT Gateway 구성해서 nginx 설치하기](guides/nat-nginx-session-manager.md) |
+| Client VPN 구성 및 Windows/WSL 접속 | [VPN 구성해서 접속하기](guides/client-vpn-windows-wsl.md) |
+
 ## NAT Gateway 실습
 
 기본값은 `enable_nat_gateway = true`입니다.
