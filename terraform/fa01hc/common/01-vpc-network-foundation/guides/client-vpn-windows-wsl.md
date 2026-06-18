@@ -33,7 +33,7 @@ LAB_DIR=terraform/fa01hc/common/01-vpc-network-foundation
 
 cd "$LAB_DIR"
 terraform init
-terraform apply
+terraform apply -auto-approve
 
 # 필요한 값을 변수로 저장합니다.
 # terraform.tfvars에서 project_name을 변경했다면 아래 값도 같은 값으로 바꿉니다.
@@ -551,7 +551,7 @@ aws acm delete-certificate \
 
 # 마지막으로 Terraform 리소스를 삭제합니다.
 cd "$REPO_DIR/$LAB_DIR"
-terraform destroy
+terraform destroy -auto-approve
 ```
 
 ## 문제 해결
