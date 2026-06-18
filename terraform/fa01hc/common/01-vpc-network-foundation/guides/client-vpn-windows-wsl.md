@@ -16,7 +16,7 @@ Terraform 기본 구성에는 Client VPN endpoint가 없습니다.
 
 ## 1. 저장소 clone 및 기본 VPC 생성
 
-로컬 PC 또는 WSL에 AWS CLI v2, Terraform, OpenSSH client가 준비되어 있어야 합니다. 인증서 생성은 WSL 기준으로 진행하고, VPN 연결은 Windows의 AWS VPN Client 또는 OpenVPN client에서 진행합니다.
+로컬 PC 또는 WSL에 AWS CLI v2, Terraform, OpenSSH client가 준비되어 있어야 합니다. 인증서 생성은 WSL 기준으로 진행합니다. VPN 연결은 Windows의 AWS VPN Client를 사용하거나, Windows 라우팅에 영향을 주지 않도록 WSL 안에서 OpenVPN을 직접 실행할 수 있습니다.
 
 ```bash
 aws --version
@@ -239,7 +239,79 @@ ssh -i C:\path\to\fa01hc-vpc-network-foundation-key.pem ec2-user@<PRIVATE_IP>
 
 `<PRIVATE_IP>`는 `terraform output -raw private_instance_private_ip` 결과로 바꿔 입력합니다. SSH key가 WSL 안에 있다면 다음 단계처럼 WSL에서 SSH 접속하는 방식을 권장합니다.
 
-## 8. WSL에서 접속 확인
+Windows에서 VPN 연결 후 기존 외부 인터넷 접속이 끊기면 VPN이 기본 경로를 가져간 상태입니다. 이 가이드의 endpoint는 `--split-tunnel`로 생성하므로, 아래 명령이 `True`인지 먼저 확인합니다.
+
+```bash
+aws ec2 describe-client-vpn-endpoints \
+  --client-vpn-endpoint-ids "$CVPN_ENDPOINT_ID" \
+  --query "ClientVpnEndpoints[0].SplitTunnel" \
+  --output text \
+  --region "$REGION"
+```
+
+`False`가 나오면 split tunnel을 켠 뒤 설정 파일을 다시 export하고 VPN client에 다시 import합니다.
+
+```bash
+aws ec2 modify-client-vpn-endpoint \
+  --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
+  --split-tunnel \
+  --region "$REGION"
+```
+
+## 8. WSL에서 OpenVPN으로 직접 연결
+
+Windows VPN Client 대신 WSL 안에서 OpenVPN을 실행하면 VPN 경로가 WSL 내부에만 적용됩니다. 이 방식은 Windows의 기존 외부 인터넷 통신을 건드리지 않고, WSL 터미널에서만 private EC2로 접속할 때 유용합니다.
+
+WSL에서 OpenVPN을 설치합니다.
+
+```bash
+sudo apt update
+sudo apt install -y openvpn iputils-ping openssh-client
+```
+
+TUN 장치가 있는지 확인합니다.
+
+```bash
+ls -l /dev/net/tun
+```
+
+`/dev/net/tun`이 없다고 나오면 아래 명령을 실행한 뒤 다시 확인합니다.
+
+```bash
+sudo modprobe tun 2>/dev/null || true
+ls -l /dev/net/tun
+```
+
+OpenVPN을 foreground로 실행합니다. 이 터미널은 VPN 연결을 유지하는 동안 닫지 않습니다.
+
+```bash
+sudo openvpn --config client-config.ovpn
+```
+
+다른 WSL 터미널을 열어 VPN 인터페이스와 라우팅을 확인합니다.
+
+```bash
+ip addr show tun0
+ip route
+ip route get "$PRIVATE_IP"
+```
+
+`ip route get "$PRIVATE_IP"` 결과가 `tun0`를 사용해야 합니다. 기본 인터넷 경로는 계속 `eth0`를 사용해야 합니다.
+
+```bash
+ip route | grep default
+```
+
+private EC2로 ping과 SSH를 테스트합니다.
+
+```bash
+ping -c 4 "$PRIVATE_IP"
+ssh -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
+```
+
+VPN 연결을 끊으려면 OpenVPN을 실행 중인 터미널에서 `Ctrl+C`를 누릅니다.
+
+## 9. Windows VPN 연결 후 WSL에서 접속 확인
 
 Windows에서 VPN을 연결한 뒤 WSL에서 실행합니다.
 
@@ -254,9 +326,9 @@ WSL2에서 Windows VPN 경로가 바로 반영되지 않으면 Windows PowerShel
 wsl --shutdown
 ```
 
-## 9. 정리
+## 10. 정리
 
-Windows VPN client에서 연결을 끊은 뒤 직접 만든 리소스를 삭제합니다.
+Windows VPN client 또는 WSL OpenVPN 연결을 끊은 뒤 직접 만든 리소스를 삭제합니다.
 
 ```bash
 aws ec2 disassociate-client-vpn-target-network \
@@ -302,7 +374,31 @@ terraform destroy
 | VPN은 연결됐지만 ping 실패 | authorization rule, Client VPN endpoint SG, private EC2 SG의 Client CIDR 허용을 확인합니다. |
 | SSH 실패 | private key 경로, `ec2-user`, private EC2 SG의 22번 허용을 확인합니다. |
 | WSL에서만 접속 실패 | Windows PowerShell에서 먼저 테스트하고, 필요하면 `wsl --shutdown` 후 WSL을 다시 엽니다. |
+| WSL OpenVPN에서 접속 실패 | `ip addr show tun0`, `ip route get "$PRIVATE_IP"`로 VPN 경로가 `tun0`인지 확인합니다. |
+| Windows VPN 연결 후 외부 인터넷이 끊김 | Client VPN endpoint의 split tunnel이 `True`인지 확인하고, 설정 파일을 다시 export/import합니다. |
+| ping 실패가 계속됨 | Client VPN route table에 VPC CIDR route가 있는지 확인하고, 없으면 `create-client-vpn-route`로 추가합니다. |
+| 특정 PC에서만 VPN 경로가 이상함 | 로컬 LAN, WSL, Docker 대역이 Client CIDR `172.16.0.0/22`와 겹치지 않는지 확인합니다. 겹치면 `terraform.tfvars`의 `client_vpn_client_cidr_block`을 다른 `/22` 대역으로 바꾼 뒤 VPC foundation부터 다시 생성합니다. |
 | 리소스 삭제 실패 | VPN client 연결을 끊고 association 삭제가 끝난 뒤 endpoint와 SG를 삭제합니다. |
+
+Client VPN route table 확인 명령입니다.
+
+```bash
+aws ec2 describe-client-vpn-routes \
+  --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
+  --query "Routes[].{Destination:DestinationCidr,TargetSubnet:TargetSubnet,Type:Type,Status:Status.Code}" \
+  --output table \
+  --region "$REGION"
+```
+
+VPC CIDR route가 없다면 명시적으로 추가합니다.
+
+```bash
+aws ec2 create-client-vpn-route \
+  --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
+  --destination-cidr-block "$VPC_CIDR" \
+  --target-vpc-subnet-id "$PRIVATE_SUBNET_ID" \
+  --region "$REGION"
+```
 
 참고 문서:
 
