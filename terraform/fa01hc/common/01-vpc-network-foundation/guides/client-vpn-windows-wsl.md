@@ -49,7 +49,12 @@ VPC_ID=$(terraform output -raw vpc_id)
 VPC_CIDR=$(terraform output -raw vpc_cidr_block)
 CLIENT_CIDR=$(terraform output -raw client_vpn_client_cidr_block)
 PRIVATE_IP=$(terraform output -raw private_instance_private_ip)
-KEY_FILE=$(terraform output -raw ssh_private_key_file)
+KEY_FILE_RAW=$(terraform output -raw ssh_private_key_file)
+
+case "$KEY_FILE_RAW" in
+  /*) KEY_FILE="$KEY_FILE_RAW" ;;
+  *) KEY_FILE="$(pwd)/$KEY_FILE_RAW" ;;
+esac
 
 PRIVATE_SUBNET_ID=$(aws ec2 describe-subnets \
   --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:Tier,Values=private" \
@@ -58,6 +63,28 @@ PRIVATE_SUBNET_ID=$(aws ec2 describe-subnets \
   --region "$REGION")
 
 chmod 400 "$KEY_FILE"
+```
+
+새 터미널을 열어도 값을 다시 불러올 수 있도록 환경변수 파일을 저장합니다.
+
+```bash
+cat > /tmp/fa01hc-vpc-network-foundation.env <<EOF
+export REPO_DIR="$REPO_DIR"
+export LAB_DIR="$LAB_DIR"
+export PROJECT_NAME="$PROJECT_NAME"
+export REGION="$REGION"
+export VPC_ID="$VPC_ID"
+export VPC_CIDR="$VPC_CIDR"
+export CLIENT_CIDR="$CLIENT_CIDR"
+export PRIVATE_IP="$PRIVATE_IP"
+export KEY_FILE="$KEY_FILE"
+export PRIVATE_SUBNET_ID="$PRIVATE_SUBNET_ID"
+export AWS_PAGER=""
+EOF
+
+source /tmp/fa01hc-vpc-network-foundation.env
+
+printf 'PRIVATE_IP=%s\nKEY_FILE=%s\n' "$PRIVATE_IP" "$KEY_FILE"
 ```
 
 ## 2. 실습용 인증서 생성
@@ -266,6 +293,14 @@ aws ec2 modify-client-vpn-endpoint \
 
 Windows VPN Client 대신 WSL 안에서 OpenVPN을 실행하면 VPN 경로가 WSL 내부에만 적용됩니다. 이 방식은 Windows의 기존 외부 인터넷 통신을 건드리지 않고, WSL 터미널에서만 private EC2로 접속할 때 유용합니다.
 
+새 WSL 터미널을 열었다면 먼저 실습 변수를 다시 불러옵니다.
+
+```bash
+source /tmp/fa01hc-vpc-network-foundation.env
+
+printf 'PRIVATE_IP=%s\nKEY_FILE=%s\n' "$PRIVATE_IP" "$KEY_FILE"
+```
+
 WSL에서 OpenVPN을 설치합니다.
 
 ```bash
@@ -318,6 +353,12 @@ VPN 연결을 끊으려면 OpenVPN을 실행 중인 터미널에서 `Ctrl+C`를 
 ## 9. Windows VPN 연결 후 WSL에서 접속 확인
 
 Windows에서 VPN을 연결한 뒤 WSL에서 실행합니다.
+
+```bash
+source /tmp/fa01hc-vpc-network-foundation.env
+
+printf 'PRIVATE_IP=%s\nKEY_FILE=%s\n' "$PRIVATE_IP" "$KEY_FILE"
+```
 
 ```bash
 ping -c 4 "$PRIVATE_IP"
