@@ -453,7 +453,22 @@ private EC2로 ping과 SSH를 테스트합니다.
 
 ```bash
 ping -c 4 "$PRIVATE_IP"
-ssh -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
+ssh -o IdentitiesOnly=yes -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
+```
+
+ping은 되는데 SSH만 안 되면 먼저 TCP 22번이 열려 있는지 확인합니다.
+
+```bash
+nc -vz "$PRIVATE_IP" 22
+```
+
+`succeeded`가 나오면 네트워크와 security group은 통과한 것이고, 키 또는 사용자명 문제일 가능성이 큽니다. `timed out`이 나오면 private EC2 security group의 TCP 22 허용 규칙을 다시 확인합니다.
+
+```bash
+ls -l "$KEY_FILE"
+chmod 400 "$KEY_FILE"
+
+ssh -vvv -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
 ```
 
 VPN 연결을 끊으려면 OpenVPN을 실행 중인 터미널에서 `Ctrl+C`를 누릅니다.
@@ -470,7 +485,7 @@ printf 'PRIVATE_IP=%s\nKEY_FILE=%s\n' "$PRIVATE_IP" "$KEY_FILE"
 
 ```bash
 ping -c 4 "$PRIVATE_IP"
-ssh -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
+ssh -o IdentitiesOnly=yes -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
 ```
 
 WSL2에서 Windows VPN 경로가 바로 반영되지 않으면 Windows PowerShell에서 먼저 ping을 테스트합니다. PowerShell에서는 되는데 WSL에서 안 되면 아래 명령으로 WSL을 재시작한 뒤 다시 확인합니다.
@@ -536,7 +551,9 @@ terraform destroy
 | VPN endpoint가 오래 걸림 | endpoint와 target network association 상태가 available이 될 때까지 기다립니다. |
 | VPN은 연결됐지만 ping 실패 | authorization rule, Client VPN endpoint SG, private EC2 SG의 Client CIDR 허용을 확인합니다. |
 | route/auth가 active인데 ping 실패 | private EC2 security group에 Client VPN endpoint security group이 source로 허용되어 있는지 확인합니다. |
-| SSH 실패 | private key 경로, `ec2-user`, private EC2 SG의 22번 허용을 확인합니다. |
+| SSH가 timeout | `nc -vz "$PRIVATE_IP" 22`로 TCP 22 연결을 확인하고, private EC2 SG의 Client CIDR 또는 Client VPN endpoint SG 허용을 확인합니다. |
+| SSH가 Permission denied | `ssh -o IdentitiesOnly=yes -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"` 형식인지, key pair가 Terraform output의 `ssh_private_key_file`과 같은지 확인합니다. |
+| private key 권한 오류 | `chmod 400 "$KEY_FILE"`을 실행합니다. Windows 파일시스템(`/mnt/c`)에 둔 key는 권한 처리가 안 될 수 있으므로 WSL 홈 디렉토리 아래 key를 사용합니다. |
 | WSL에서만 접속 실패 | Windows PowerShell에서 먼저 테스트하고, 필요하면 `wsl --shutdown` 후 WSL을 다시 엽니다. |
 | WSL OpenVPN에서 접속 실패 | `ip addr show tun0`, `ip route get "$PRIVATE_IP"`로 VPN 경로가 `tun0`인지 확인합니다. |
 | Windows VPN 연결 후 외부 인터넷이 끊김 | Client VPN endpoint의 split tunnel이 `True`인지 확인하고, 설정 파일을 다시 export/import합니다. |
