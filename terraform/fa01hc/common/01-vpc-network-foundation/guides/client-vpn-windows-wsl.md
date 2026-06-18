@@ -49,6 +49,7 @@ VPC_ID=$(terraform output -raw vpc_id)
 VPC_CIDR=$(terraform output -raw vpc_cidr_block)
 CLIENT_CIDR=$(terraform output -raw client_vpn_client_cidr_block)
 PRIVATE_IP=$(terraform output -raw private_instance_private_ip)
+PRIVATE_INSTANCE_SG_ID=$(terraform output -raw private_instance_security_group_id)
 KEY_FILE_RAW=$(terraform output -raw ssh_private_key_file)
 
 case "$KEY_FILE_RAW" in
@@ -77,6 +78,7 @@ export VPC_ID="$VPC_ID"
 export VPC_CIDR="$VPC_CIDR"
 export CLIENT_CIDR="$CLIENT_CIDR"
 export PRIVATE_IP="$PRIVATE_IP"
+export PRIVATE_INSTANCE_SG_ID="$PRIVATE_INSTANCE_SG_ID"
 export KEY_FILE="$KEY_FILE"
 export PRIVATE_SUBNET_ID="$PRIVATE_SUBNET_ID"
 export AWS_PAGER=""
@@ -152,7 +154,19 @@ export CVPN_SG_ID="$CVPN_SG_ID"
 EOF
 ```
 
-private EC2 security group은 Terraform에서 이미 `172.16.0.0/22` 대역의 ICMP와 SSH를 허용합니다.
+private EC2 security group은 Terraform에서 `172.16.0.0/22` 대역의 ICMP와 SSH를 허용합니다. Client VPN route type이 `Nat`로 보이는 환경에서는 EC2가 Client VPN endpoint security group을 source로 보는 경우가 있으므로, endpoint security group도 source로 추가 허용합니다.
+
+```bash
+aws ec2 authorize-security-group-ingress \
+  --group-id "$PRIVATE_INSTANCE_SG_ID" \
+  --ip-permissions "IpProtocol=icmp,FromPort=-1,ToPort=-1,UserIdGroupPairs=[{GroupId=$CVPN_SG_ID,Description='ICMP from Client VPN endpoint SG'}]" \
+  --region "$REGION" || true
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$PRIVATE_INSTANCE_SG_ID" \
+  --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,UserIdGroupPairs=[{GroupId=$CVPN_SG_ID,Description='SSH from Client VPN endpoint SG'}]" \
+  --region "$REGION" || true
+```
 
 ## 5. Client VPN endpoint 생성
 
@@ -483,6 +497,16 @@ aws ec2 revoke-client-vpn-ingress \
   --revoke-all-groups \
   --region "$REGION"
 
+aws ec2 revoke-security-group-ingress \
+  --group-id "$PRIVATE_INSTANCE_SG_ID" \
+  --ip-permissions "IpProtocol=icmp,FromPort=-1,ToPort=-1,UserIdGroupPairs=[{GroupId=$CVPN_SG_ID}]" \
+  --region "$REGION" || true
+
+aws ec2 revoke-security-group-ingress \
+  --group-id "$PRIVATE_INSTANCE_SG_ID" \
+  --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,UserIdGroupPairs=[{GroupId=$CVPN_SG_ID}]" \
+  --region "$REGION" || true
+
 aws ec2 delete-client-vpn-endpoint \
   --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
   --region "$REGION"
@@ -511,6 +535,7 @@ terraform destroy
 | --- | --- |
 | VPN endpoint가 오래 걸림 | endpoint와 target network association 상태가 available이 될 때까지 기다립니다. |
 | VPN은 연결됐지만 ping 실패 | authorization rule, Client VPN endpoint SG, private EC2 SG의 Client CIDR 허용을 확인합니다. |
+| route/auth가 active인데 ping 실패 | private EC2 security group에 Client VPN endpoint security group이 source로 허용되어 있는지 확인합니다. |
 | SSH 실패 | private key 경로, `ec2-user`, private EC2 SG의 22번 허용을 확인합니다. |
 | WSL에서만 접속 실패 | Windows PowerShell에서 먼저 테스트하고, 필요하면 `wsl --shutdown` 후 WSL을 다시 엽니다. |
 | WSL OpenVPN에서 접속 실패 | `ip addr show tun0`, `ip route get "$PRIVATE_IP"`로 VPN 경로가 `tun0`인지 확인합니다. |
