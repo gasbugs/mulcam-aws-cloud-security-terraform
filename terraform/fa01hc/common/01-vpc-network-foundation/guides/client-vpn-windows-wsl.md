@@ -71,10 +71,14 @@ make-cadir ~/fa01hc-client-vpn-ca
 cd ~/fa01hc-client-vpn-ca
 
 export EASYRSA_BATCH=1
-export EASYRSA_REQ_CN=fa01hc-client-vpn-ca
 
 ./easyrsa init-pki
+
+export EASYRSA_REQ_CN=fa01hc-client-vpn-ca
 ./easyrsa build-ca nopass
+
+unset EASYRSA_REQ_CN
+
 ./easyrsa build-server-full server nopass
 ./easyrsa build-client-full student1.domain.tld nopass
 ```
