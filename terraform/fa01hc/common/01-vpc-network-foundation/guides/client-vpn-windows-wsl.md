@@ -124,6 +124,10 @@ SERVER_CERT_ARN=$(aws acm import-certificate \
   --output text)
 
 echo "$SERVER_CERT_ARN"
+
+cat >> /tmp/fa01hc-vpc-network-foundation.env <<EOF
+export SERVER_CERT_ARN="$SERVER_CERT_ARN"
+EOF
 ```
 
 server certificate와 client certificate가 같은 CA에서 발급되었으므로, 같은 ACM certificate ARN을 client root certificate chain으로 사용할 수 있습니다.
@@ -142,6 +146,10 @@ CVPN_SG_ID=$(aws ec2 create-security-group \
   --region "$REGION")
 
 echo "$CVPN_SG_ID"
+
+cat >> /tmp/fa01hc-vpc-network-foundation.env <<EOF
+export CVPN_SG_ID="$CVPN_SG_ID"
+EOF
 ```
 
 private EC2 security group은 Terraform에서 이미 `172.16.0.0/22` 대역의 ICMP와 SSH를 허용합니다.
@@ -168,6 +176,10 @@ CVPN_ENDPOINT_ID=$(aws ec2 create-client-vpn-endpoint \
   --region "$REGION")
 
 echo "$CVPN_ENDPOINT_ID"
+
+cat >> /tmp/fa01hc-vpc-network-foundation.env <<EOF
+export CVPN_ENDPOINT_ID="$CVPN_ENDPOINT_ID"
+EOF
 ```
 
 private subnet에 target network association을 만듭니다.
@@ -181,6 +193,10 @@ ASSOCIATION_ID=$(aws ec2 associate-client-vpn-target-network \
   --region "$REGION")
 
 echo "$ASSOCIATION_ID"
+
+cat >> /tmp/fa01hc-vpc-network-foundation.env <<EOF
+export ASSOCIATION_ID="$ASSOCIATION_ID"
+EOF
 ```
 
 association이 완료될 때까지 기다립니다. 몇 분 걸릴 수 있습니다.
@@ -221,7 +237,81 @@ aws ec2 authorize-client-vpn-ingress \
   --region "$REGION"
 ```
 
-콘솔에서 **VPC > Client VPN endpoints**로 이동해 endpoint와 target network association이 available/associated 상태인지, authorization rule이 active 상태인지 확인합니다.
+authorization rule이 `active` 상태가 될 때까지 기다립니다.
+
+```bash
+for i in {1..40}; do
+  AUTH_STATUS=$(aws ec2 describe-client-vpn-authorization-rules \
+    --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
+    --query "AuthorizationRules[?DestinationCidr=='$VPC_CIDR'].Status.Code | [0]" \
+    --output text \
+    --region "$REGION")
+
+  echo "$AUTH_STATUS"
+
+  if [ "$AUTH_STATUS" = "active" ]; then
+    break
+  fi
+
+  sleep 15
+done
+
+if [ "$AUTH_STATUS" != "active" ]; then
+  echo "Client VPN authorization rule 상태를 확인하세요: $AUTH_STATUS"
+  exit 1
+fi
+```
+
+Client VPN route table에 VPC CIDR route가 `active`인지 확인합니다. Target network association을 만들면 VPC local route가 자동으로 추가되어야 하지만, 실습 중 상태 확인을 위해 명시적으로 확인합니다.
+
+```bash
+ROUTE_STATUS=$(aws ec2 describe-client-vpn-routes \
+  --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
+  --query "Routes[?DestinationCidr=='$VPC_CIDR'].Status.Code | [0]" \
+  --output text \
+  --region "$REGION")
+
+echo "$ROUTE_STATUS"
+```
+
+`None`이 나오면 VPC CIDR route를 직접 추가합니다.
+
+```bash
+if [ "$ROUTE_STATUS" = "None" ]; then
+  aws ec2 create-client-vpn-route \
+    --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
+    --destination-cidr-block "$VPC_CIDR" \
+    --target-vpc-subnet-id "$PRIVATE_SUBNET_ID" \
+    --region "$REGION"
+fi
+```
+
+route가 `active` 상태가 될 때까지 기다립니다.
+
+```bash
+for i in {1..40}; do
+  ROUTE_STATUS=$(aws ec2 describe-client-vpn-routes \
+    --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
+    --query "Routes[?DestinationCidr=='$VPC_CIDR'].Status.Code | [0]" \
+    --output text \
+    --region "$REGION")
+
+  echo "$ROUTE_STATUS"
+
+  if [ "$ROUTE_STATUS" = "active" ]; then
+    break
+  fi
+
+  sleep 15
+done
+
+if [ "$ROUTE_STATUS" != "active" ]; then
+  echo "Client VPN route 상태를 확인하세요: $ROUTE_STATUS"
+  exit 1
+fi
+```
+
+콘솔에서 확인한다면 **VPC > Client VPN endpoints**로 이동해 endpoint와 target network association이 available/associated 상태인지, authorization rule과 route가 active 상태인지 확인합니다.
 
 ## 6. Client VPN 설정 파일 생성
 
@@ -250,6 +340,8 @@ client certificate와 private key를 `.ovpn` 파일에 추가합니다.
 WSL 파일은 Windows Explorer에서 `\\wsl$` 경로로 접근할 수 있습니다.
 
 ## 7. Windows에서 VPN 연결
+
+이미 VPN을 연결한 상태에서 authorization rule이나 route를 추가했다면 먼저 연결을 끊고 다시 연결합니다. Split tunnel Client VPN은 연결 시점의 endpoint route table을 클라이언트 route table에 내려줍니다.
 
 1. AWS VPN Client 또는 OpenVPN client를 설치합니다.
 2. `client-config.ovpn` 파일을 import합니다.
@@ -292,6 +384,8 @@ aws ec2 modify-client-vpn-endpoint \
 ## 8. WSL에서 OpenVPN으로 직접 연결
 
 Windows VPN Client 대신 WSL 안에서 OpenVPN을 실행하면 VPN 경로가 WSL 내부에만 적용됩니다. 이 방식은 Windows의 기존 외부 인터넷 통신을 건드리지 않고, WSL 터미널에서만 private EC2로 접속할 때 유용합니다.
+
+이미 WSL OpenVPN을 실행 중인 상태에서 authorization rule이나 route를 추가했다면 `Ctrl+C`로 끊은 뒤 다시 실행합니다. Split tunnel route는 VPN 연결 시점에 적용됩니다.
 
 새 WSL 터미널을 열었다면 먼저 실습 변수를 다시 불러옵니다.
 
