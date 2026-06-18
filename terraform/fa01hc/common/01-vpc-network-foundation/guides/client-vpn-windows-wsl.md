@@ -1,6 +1,6 @@
 # VPN 구성해서 접속하기
 
-이 가이드는 Terraform이 만든 기본 VPC와 private EC2를 대상으로 AWS Client VPN endpoint를 수강생이 직접 구성하고, Windows 또는 WSL 환경에서 private EC2에 SSH로 접속하는 실습입니다.
+이 가이드는 Terraform이 만든 기본 VPC와 private EC2를 대상으로 AWS Client VPN endpoint를 수강생이 직접 구성하고, WSL 환경에서 OpenVPN으로 private EC2에 SSH로 접속하는 실습입니다.
 
 Terraform 기본 구성에는 Client VPN endpoint가 없습니다.
 
@@ -16,7 +16,7 @@ Terraform 기본 구성에는 Client VPN endpoint가 없습니다.
 
 ## 1. 저장소 clone 및 기본 VPC 생성
 
-로컬 PC 또는 WSL에 AWS CLI v2, Terraform, OpenSSH client가 준비되어 있어야 합니다. 인증서 생성은 WSL 기준으로 진행합니다. VPN 연결은 Windows의 AWS VPN Client를 사용하거나, Windows 라우팅에 영향을 주지 않도록 WSL 안에서 OpenVPN을 직접 실행할 수 있습니다.
+WSL에 AWS CLI v2, Terraform, OpenSSH client가 준비되어 있어야 합니다. 인증서 생성과 VPN 연결은 모두 WSL 기준으로 진행합니다.
 
 ```bash
 aws --version
@@ -362,53 +362,21 @@ test "$OVPN_ENDPOINT_ID" = "$CVPN_ENDPOINT_ID"
 
 `test` 명령이 실패하면 지금 만든 endpoint의 client configuration을 다시 export하고 client certificate/private key를 다시 추가합니다.
 
-WSL 파일은 Windows Explorer에서 `\\wsl$` 경로로 접근할 수 있습니다.
-
-## 7. Windows에서 VPN 연결
-
-이미 VPN을 연결한 상태에서 authorization rule이나 route를 추가했다면 먼저 연결을 끊고 다시 연결합니다. Split tunnel Client VPN은 연결 시점의 endpoint route table을 클라이언트 route table에 내려줍니다.
-
-1. AWS VPN Client 또는 OpenVPN client를 설치합니다.
-2. `client-config.ovpn` 파일을 import합니다.
-3. 프로필을 선택하고 Connect를 누릅니다.
-4. 연결 상태가 Connected인지 확인합니다.
-
-PowerShell에서 private EC2가 보이는지 확인합니다.
-
-```powershell
-ping <PRIVATE_IP>
-```
-
-SSH로 접속합니다.
-
-```powershell
-ssh -i C:\path\to\fa01hc-vpc-network-foundation-key.pem ec2-user@<PRIVATE_IP>
-```
-
-`<PRIVATE_IP>`는 `terraform output -raw private_instance_private_ip` 결과로 바꿔 입력합니다. SSH key가 WSL 안에 있다면 다음 단계처럼 WSL에서 SSH 접속하는 방식을 권장합니다.
-
-Windows에서 VPN 연결 후 기존 외부 인터넷 접속이 끊기면 VPN이 기본 경로를 가져간 상태입니다. 이 가이드의 endpoint는 `--split-tunnel`로 생성하므로, 아래 명령이 `True`인지 먼저 확인합니다.
+WSL 경로에서 MTU/MSS 조정용 설정 파일을 미리 만듭니다. AWS Client VPN이 `tun-mtu 1500`을 push하면 일부 WSL 네트워크 환경에서 SSH key exchange가 멈출 수 있으므로, WSL에서는 이 파일로 연결합니다.
 
 ```bash
-aws ec2 describe-client-vpn-endpoints \
-  --client-vpn-endpoint-ids "$CVPN_ENDPOINT_ID" \
-  --query "ClientVpnEndpoints[0].SplitTunnel" \
-  --output text \
-  --region "$REGION"
+cp client-config.ovpn client-config-mtu.ovpn
+
+cat >> client-config-mtu.ovpn <<'EOF'
+pull-filter ignore "tun-mtu"
+tun-mtu 1280
+mssfix 1200
+EOF
 ```
 
-`False`가 나오면 split tunnel을 켠 뒤 설정 파일을 다시 export하고 VPN client에 다시 import합니다.
+## 7. WSL에서 OpenVPN으로 직접 연결
 
-```bash
-aws ec2 modify-client-vpn-endpoint \
-  --client-vpn-endpoint-id "$CVPN_ENDPOINT_ID" \
-  --split-tunnel \
-  --region "$REGION"
-```
-
-## 8. WSL에서 OpenVPN으로 직접 연결
-
-Windows VPN Client 대신 WSL 안에서 OpenVPN을 실행하면 VPN 경로가 WSL 내부에만 적용됩니다. 이 방식은 Windows의 기존 외부 인터넷 통신을 건드리지 않고, WSL 터미널에서만 private EC2로 접속할 때 유용합니다.
+WSL 안에서 OpenVPN을 실행하면 VPN 경로가 WSL 내부에만 적용됩니다.
 
 이미 WSL OpenVPN을 실행 중인 상태에서 authorization rule이나 route를 추가했다면 `Ctrl+C`로 끊은 뒤 다시 실행합니다. Split tunnel route는 VPN 연결 시점에 적용됩니다.
 
@@ -443,13 +411,20 @@ ls -l /dev/net/tun
 OpenVPN을 foreground로 실행합니다. 이 터미널은 VPN 연결을 유지하는 동안 닫지 않습니다.
 
 ```bash
-sudo openvpn --config client-config.ovpn
+sudo openvpn --config client-config-mtu.ovpn
 ```
 
 OpenVPN 로그의 `remote` 또는 `TCP/UDP link remote`가 의도한 endpoint인지 확인합니다. 다른 endpoint로 연결 중이면 아래 명령으로 설정 파일의 endpoint ID를 확인합니다.
 
 ```bash
-sed -n 's/^remote \(cvpn-endpoint-[a-z0-9]*\)\..*/\1/p' client-config.ovpn
+sed -n 's/^remote \(cvpn-endpoint-[a-z0-9]*\)\..*/\1/p' client-config-mtu.ovpn
+```
+
+OpenVPN 로그에 아래 두 줄이 보여야 MTU push를 무시하고 WSL용 MTU가 적용된 상태입니다.
+
+```text
+Pushed option removed by filter: 'tun-mtu 1500'
+net_iface_mtu_set: mtu 1280 for tun0
 ```
 
 다른 WSL 터미널을 열어 VPN 인터페이스와 라우팅을 확인합니다.
@@ -492,16 +467,10 @@ ssh -vvv -o IdentitiesOnly=yes -o ConnectTimeout=10 -i "$KEY_FILE" "ec2-user@$PR
 
 `head -n 1 "$KEY_FILE"`은 `-----BEGIN ... PRIVATE KEY-----` 형태로 시작해야 합니다. `ssh -vvv` 로그에서 `identity file ... type -1`이 보이면 key 파일 경로가 틀렸거나 파일을 읽지 못하는 상태입니다. 이때는 `cd "$REPO_DIR/$LAB_DIR"`에서 `terraform output -raw ssh_private_key_file` 값을 다시 확인합니다.
 
-`nc`는 성공하는데 SSH가 아무 출력 없이 멈추거나, `ssh -vvv` 출력이 `expecting SSH2_MSG_KEX_ECDH_REPLY` 근처에서 멈추면 VPN 경로의 MTU/MSS 문제일 가능성이 큽니다. 이 경우 OpenVPN 설정 파일 복사본에 MSS/MTU 옵션을 추가해서 다시 연결합니다.
+`nc`는 성공하는데 SSH가 아무 출력 없이 멈추거나, `ssh -vvv` 출력이 `expecting SSH2_MSG_KEX_ECDH_REPLY` 근처에서 멈추면 VPN 경로의 MTU/MSS 문제일 가능성이 큽니다. 먼저 MTU 설정 파일에 필요한 옵션이 있는지 확인합니다.
 
 ```bash
-cp client-config.ovpn client-config-mtu.ovpn
-
-cat >> client-config-mtu.ovpn <<'EOF'
-pull-filter ignore "tun-mtu"
-tun-mtu 1280
-mssfix 1200
-EOF
+grep -E 'pull-filter|tun-mtu|mssfix' client-config-mtu.ovpn
 ```
 
 OpenVPN을 실행 중인 터미널에서 `Ctrl+C`로 연결을 끊고, MTU 조정 파일로 다시 연결합니다.
@@ -522,34 +491,13 @@ ssh -o IPQoS=none -o IdentitiesOnly=yes -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
 
 OpenVPN 로그의 `PUSH_REPLY`에 `tun-mtu 1500`이 계속 보이면 서버가 내려주는 MTU 값을 클라이언트가 아직 받고 있는 상태입니다. `client-config-mtu.ovpn`에 `pull-filter ignore "tun-mtu"`가 들어 있는지 확인하고, 반드시 MTU 조정 파일로 다시 연결합니다.
 
-그래도 같은 위치에서 멈추면 `client-config-mtu.ovpn`의 값을 `tun-mtu 1300`, `mssfix 1260`으로 낮춰 다시 연결합니다.
+그래도 같은 위치에서 멈추면 `client-config-mtu.ovpn`의 값을 `tun-mtu 1200`, `mssfix 1160`으로 낮춰 다시 연결합니다.
 
 VPN 연결을 끊으려면 OpenVPN을 실행 중인 터미널에서 `Ctrl+C`를 누릅니다.
 
-## 9. Windows VPN 연결 후 WSL에서 접속 확인
+## 8. 정리
 
-Windows에서 VPN을 연결한 뒤 WSL에서 실행합니다.
-
-```bash
-source /tmp/fa01hc-vpc-network-foundation.env
-
-printf 'PRIVATE_IP=%s\nKEY_FILE=%s\n' "$PRIVATE_IP" "$KEY_FILE"
-```
-
-```bash
-ping -c 4 "$PRIVATE_IP"
-ssh -o IdentitiesOnly=yes -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"
-```
-
-WSL2에서 Windows VPN 경로가 바로 반영되지 않으면 Windows PowerShell에서 먼저 ping을 테스트합니다. PowerShell에서는 되는데 WSL에서 안 되면 아래 명령으로 WSL을 재시작한 뒤 다시 확인합니다.
-
-```powershell
-wsl --shutdown
-```
-
-## 10. 정리
-
-Windows VPN client 또는 WSL OpenVPN 연결을 끊은 뒤 직접 만든 리소스를 삭제합니다.
+WSL OpenVPN 연결을 끊은 뒤 직접 만든 리소스를 삭제합니다.
 
 ```bash
 aws ec2 disassociate-client-vpn-target-network \
@@ -602,16 +550,15 @@ terraform destroy
 | 증상 | 확인할 내용 |
 | --- | --- |
 | VPN endpoint가 오래 걸림 | endpoint와 target network association 상태가 available이 될 때까지 기다립니다. |
-| VPN은 연결됐지만 ping 실패 | `client-config.ovpn`이 가리키는 실제 endpoint ID를 확인하고, 그 endpoint의 authorization rule, Client VPN endpoint SG, private EC2 SG의 Client CIDR 허용을 확인합니다. |
+| VPN은 연결됐지만 ping 실패 | `client-config-mtu.ovpn`이 가리키는 실제 endpoint ID를 확인하고, 그 endpoint의 authorization rule, Client VPN endpoint SG, private EC2 SG의 Client CIDR 허용을 확인합니다. |
+| VPN은 연결됐지만 다른 private IP만 실패 | `/tmp/fa01hc-vpc-network-foundation.env`, `terraform output`, 실제 AWS 리소스가 같은 VPC를 가리키는지 확인합니다. 이전 실습의 endpoint/config를 재사용하면 같은 `10.60.0.0/16` CIDR이어도 다른 VPC로 라우팅될 수 있습니다. |
 | route/auth가 active인데 ping 실패 | private EC2 security group에 Client VPN endpoint security group이 source로 허용되어 있는지 확인합니다. |
 | SSH가 timeout | `nc -vz "$PRIVATE_IP" 22`로 TCP 22 연결을 확인하고, private EC2 SG의 Client CIDR 또는 Client VPN endpoint SG 허용을 확인합니다. |
 | `nc`는 성공하지만 SSH가 `expecting SSH2_MSG_KEX_ECDH_REPLY`에서 멈춤 | `client-config-mtu.ovpn`에 `pull-filter ignore "tun-mtu"`, `tun-mtu 1280`, `mssfix 1200`을 추가해 다시 연결합니다. `PUSH_REPLY`에 `tun-mtu 1500`이 계속 보이면 MTU push를 아직 무시하지 못한 상태입니다. |
 | `ssh -vvv`에 `identity file ... type -1`이 보임 | `KEY_FILE` 경로가 틀렸거나 파일이 없습니다. `ls -l "$KEY_FILE"`과 `head -n 1 "$KEY_FILE"`로 private key 파일인지 확인합니다. |
-| SSH가 Permission denied | `ssh -o IdentitiesOnly=yes -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"` 형식인지, key pair가 Terraform output의 `ssh_private_key_file`과 같은지 확인합니다. |
-| private key 권한 오류 | `chmod 400 "$KEY_FILE"`을 실행합니다. Windows 파일시스템(`/mnt/c`)에 둔 key는 권한 처리가 안 될 수 있으므로 WSL 홈 디렉토리 아래 key를 사용합니다. |
-| WSL에서만 접속 실패 | Windows PowerShell에서 먼저 테스트하고, 필요하면 `wsl --shutdown` 후 WSL을 다시 엽니다. |
+| SSH가 Permission denied | `ssh -o IdentitiesOnly=yes -i "$KEY_FILE" "ec2-user@$PRIVATE_IP"` 형식인지 확인합니다. 그래도 실패하면 `aws ec2 describe-key-pairs --key-names "$(terraform output -raw ssh_key_pair_name)" --query "KeyPairs[0].KeyFingerprint" --output text --region "$REGION"` 결과와 `ssh-keygen -yf "$KEY_FILE" \| ssh-keygen -lf - -E md5` 결과가 같은지 비교합니다. |
+| private key 권한 오류 | `chmod 400 "$KEY_FILE"`을 실행합니다. |
 | WSL OpenVPN에서 접속 실패 | `ip addr show tun0`, `ip route get "$PRIVATE_IP"`로 VPN 경로가 `tun0`인지 확인합니다. |
-| Windows VPN 연결 후 외부 인터넷이 끊김 | Client VPN endpoint의 split tunnel이 `True`인지 확인하고, 설정 파일을 다시 export/import합니다. |
 | ping 실패가 계속됨 | Client VPN route table에 VPC CIDR route가 있는지 확인하고, 없으면 `create-client-vpn-route`로 추가합니다. |
 | 특정 PC에서만 VPN 경로가 이상함 | 로컬 LAN, WSL, Docker 대역이 Client CIDR `172.16.0.0/22`와 겹치지 않는지 확인합니다. 겹치면 `terraform.tfvars`의 `client_vpn_client_cidr_block`을 다른 `/22` 대역으로 바꾼 뒤 VPC foundation부터 다시 생성합니다. |
 | 리소스 삭제 실패 | VPN client 연결을 끊고 association 삭제가 끝난 뒤 endpoint와 SG를 삭제합니다. |
@@ -619,7 +566,7 @@ terraform destroy
 Client VPN route table 확인 명령입니다.
 
 ```bash
-OVPN_ENDPOINT_ID=$(sed -n 's/^remote \(cvpn-endpoint-[a-z0-9]*\)\..*/\1/p' client-config.ovpn | head -n 1)
+OVPN_ENDPOINT_ID=$(sed -n 's/^remote \(cvpn-endpoint-[a-z0-9]*\)\..*/\1/p' client-config-mtu.ovpn | head -n 1)
 
 aws ec2 describe-client-vpn-routes \
   --client-vpn-endpoint-id "$OVPN_ENDPOINT_ID" \
