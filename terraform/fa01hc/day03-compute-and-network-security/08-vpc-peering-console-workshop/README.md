@@ -242,6 +242,22 @@ aws ec2 associate-transit-gateway-route-table \
   --region "$AWS_REGION"
 ```
 
+association이 빠지면 TGW route가 있어도 트래픽이 올바른 route table을 보지 못합니다. 아래 출력에서 App/Shared attachment는 workload route table에, Inspection attachment는 inspection route table에 `associated`로 보여야 합니다.
+
+```bash
+aws ec2 get-transit-gateway-route-table-associations \
+  --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" \
+  --query "Associations[].{Attachment:TransitGatewayAttachmentId,ResourceId:ResourceId,State:State}" \
+  --output table \
+  --region "$AWS_REGION"
+
+aws ec2 get-transit-gateway-route-table-associations \
+  --transit-gateway-route-table-id "$INSPECTION_TGW_RT_ID_STUDENT" \
+  --query "Associations[].{Attachment:TransitGatewayAttachmentId,ResourceId:ResourceId,State:State}" \
+  --output table \
+  --region "$AWS_REGION"
+```
+
 ## 7. Network Firewall Rule Group 생성
 
 Rule group은 방화벽 규칙 모음입니다. 여기서는 ICMP, 즉 ping 트래픽만 App CIDR과 Shared CIDR 사이에서 허용합니다. 다른 트래픽은 뒤에서 policy 기본 동작으로 차단됩니다.
@@ -408,6 +424,16 @@ aws ec2 create-transit-gateway-route \
 ```
 
 라우팅이 데이터 플레인에 반영될 시간을 줍니다. 테스트에서는 120초 대기 후 첫 App -> Shared ping이 실패했고, 1분 뒤 재시도에서 성공했습니다.
+
+```bash
+aws ec2 describe-route-tables \
+  --route-table-ids "$APP_PRIVATE_RT_ID" "$SHARED_PRIVATE_RT_ID" "$INSPECTION_TGW_RT_ID" "$INSPECTION_FIREWALL_RT_ID" \
+  --query "RouteTables[].{RouteTableId:RouteTableId,Routes:Routes[].{Destination:DestinationCidrBlock,GatewayId:GatewayId,TransitGatewayId:TransitGatewayId,State:State}}" \
+  --output table \
+  --region "$AWS_REGION"
+```
+
+Network Firewall endpoint route는 출력에서 `VpcEndpointId`가 아니라 `GatewayId=vpce-...`로 보일 수 있습니다. `INSPECTION_TGW_RT_ID`의 `0.0.0.0/0` 대상이 Firewall endpoint이고, `INSPECTION_FIREWALL_RT_ID`의 `0.0.0.0/0` 대상이 TGW이면 정상입니다.
 
 ```bash
 aws ec2 search-transit-gateway-routes \
