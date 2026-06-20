@@ -1,20 +1,12 @@
 # 3일차 / TGW와 중앙 방화벽 Inspection AWS CLI 실습 준비 랩
 
-이 실습은 강사가 Terraform으로 App VPC, Shared VPC, Inspection VPC, 테스트 인스턴스, SSM 접속 환경만 미리 배포하고, 수강생이 AWS CLI로 Transit Gateway, AWS Network Firewall, 라우팅 경로를 직접 완성하도록 구성합니다.
+이 실습은 강사가 Terraform으로 기본 네트워크만 먼저 준비하고, 수강생이 AWS CLI 명령으로 Transit Gateway, AWS Network Firewall, 라우팅을 직접 완성하는 랩입니다.
 
-중요한 제약이 있습니다. VPC Peering만으로는 `App VPC -> Firewall VPC -> Shared VPC`처럼 중간 VPC를 경유하는 통신을 만들 수 없습니다. VPC Peering은 transitive routing을 지원하지 않기 때문입니다. 그래서 중간 방화벽을 실제 경로에 삽입하려면 Transit Gateway, Inspection VPC, AWS Network Firewall 구조가 필요합니다.
+VPC Peering만으로는 `App VPC -> Firewall VPC -> Shared VPC`처럼 중간 VPC를 경유하는 통신을 만들 수 없습니다. VPC Peering은 transitive routing을 지원하지 않기 때문입니다. 그래서 중앙 방화벽을 실제 트래픽 경로에 넣으려면 Transit Gateway, Inspection VPC, AWS Network Firewall 구조가 필요합니다.
 
-Terraform은 다음 항목을 만들지 않습니다. 이 항목들이 수강생 실습 범위입니다.
+이 문서는 2026-06-20에 `us-east-1`에서 end-to-end로 검증했습니다. Terraform 기본 구성, 수강생 CLI 구성, App/Shared 양방향 ping, 전체 삭제까지 확인했습니다. 첫 번째 ping은 라우팅 반영 지연으로 실패할 수 있고, 1분 뒤 재시도하면 정상 성공할 수 있습니다.
 
-- Transit Gateway
-- TGW VPC attachment
-- TGW route table, association, route
-- AWS Network Firewall rule group
-- AWS Network Firewall policy
-- AWS Network Firewall
-- VPC route table의 TGW 및 firewall endpoint route
-
-## 1. 실습 아키텍처
+## 1. 실습 구조
 
 ```mermaid
 flowchart LR
@@ -35,35 +27,30 @@ flowchart LR
     SHARED_TGW --> SHARED
 ```
 
-## 2. 실습 목표
-
-| 구분 | 결과 |
-| --- | --- |
-| Terraform 준비 직후 | App VPC와 Shared VPC 사이 통신 차단 |
-| 수강생 작업 1 | Transit Gateway 생성 |
-| 수강생 작업 2 | App, Shared, Inspection VPC attachment 생성 |
-| 수강생 작업 3 | TGW route table association과 route 구성 |
-| 수강생 작업 4 | Inspection VPC에 AWS Network Firewall 생성 |
-| 수강생 작업 5 | VPC route table에서 TGW와 firewall endpoint 경로 구성 |
-| 최종 테스트 | App EC2와 Shared EC2 간 private IP ping 성공 |
-| 접속 방식 | Public IP 없이 SSM Run Command 또는 Session Manager 사용 |
-
-EC2 Security Group은 ICMP 테스트가 가능하도록 Terraform에서 미리 열어 둡니다. 이 실습의 방화벽은 Security Group이 아니라 중간 경로에 삽입되는 AWS Network Firewall입니다.
-
-## 3. Terraform 준비 리소스
+Terraform은 아래 리소스만 준비합니다.
 
 | 리소스 | 구성 |
 | --- | --- |
 | VPC | App, Shared, Inspection |
-| Subnet | App/Shared private subnet, App/Shared TGW attachment subnet, Inspection firewall subnet, Inspection TGW attachment subnet |
-| Route Table | Workload private RT, Workload TGW attachment RT, Inspection firewall RT, Inspection TGW attachment RT |
-| VPC Endpoint | App/Shared VPC에 SSM interface endpoint |
-| EC2 | App/Shared VPC에 SSM 테스트 인스턴스 |
-| IAM | SSM Session Manager용 instance profile |
+| Subnet | App/Shared private subnet, App/Shared TGW subnet, Inspection firewall subnet, Inspection TGW subnet |
+| Route Table | Workload private RT, Workload TGW RT, Inspection firewall RT, Inspection TGW RT |
+| VPC Endpoint | App/Shared VPC의 SSM, ssmmessages, ec2messages endpoint |
+| EC2 | App/Shared VPC의 private 테스트 인스턴스 |
+| IAM | SSM 접속용 instance profile |
 
-## 4. 실습 전 확인
+수강생은 아래 리소스를 직접 만듭니다.
 
-이 가이드는 bash 또는 zsh 기준입니다. 모든 명령은 `us-east-1`에서 실행합니다.
+- Transit Gateway
+- TGW VPC attachment
+- TGW route table, association, route
+- AWS Network Firewall rule group
+- AWS Network Firewall policy
+- AWS Network Firewall
+- VPC route table의 TGW 및 firewall endpoint route
+
+## 2. 실습 전 확인
+
+모든 명령은 bash 또는 zsh 기준입니다. `AWS_PAGER`를 비워두면 AWS CLI가 결과를 별도 pager로 열지 않아 실습 흐름이 끊기지 않습니다.
 
 ```bash
 aws --version
@@ -73,40 +60,21 @@ export AWS_PAGER=""
 export AWS_REGION=us-east-1
 ```
 
-AWS CLI 자격 증명이 아직 설정되어 있지 않다면 실습 계정의 Access key를 profile로 먼저 등록합니다.
+실습용 profile을 쓸 경우 먼저 자격 증명을 등록합니다. 실습 계정 CSV에 session token이 있으면 마지막 명령도 같이 실행합니다.
 
 ```bash
 aws configure --profile fa01hc
-```
-
-입력값은 실습 계정 CSV의 값을 사용합니다.
-
-| 항목 | 입력값 |
-| --- | --- |
-| AWS Access Key ID | CSV의 `Access key ID` |
-| AWS Secret Access Key | CSV의 `Secret access key` |
-| Default region name | `us-east-1` |
-| Default output format | `json` |
-
-CSV에 session token이 포함된 임시 자격 증명이라면 아래 명령도 추가로 실행합니다.
-
-```bash
 aws configure set aws_session_token "CSV의 session token 값" --profile fa01hc
-```
 
-이 터미널에서 Terraform과 AWS CLI가 같은 profile을 쓰도록 지정합니다.
-
-```bash
 export AWS_PROFILE=fa01hc
-
 aws sts get-caller-identity
 ```
 
-`aws sts get-caller-identity`가 account, user ARN을 출력해야 다음 단계로 진행합니다. 여기서 `No valid credential sources found` 또는 `Unable to locate credentials`가 나오면 Terraform도 같은 이유로 실패합니다.
+`aws sts get-caller-identity`는 현재 CLI가 어떤 계정으로 실행되는지 확인하는 명령입니다. 여기서 실패하면 Terraform과 뒤의 AWS CLI 명령도 같은 이유로 실패합니다.
 
-Network Firewall과 Transit Gateway는 생성 시간 동안 비용이 발생합니다. 실습이 끝나면 반드시 정리 절차를 완료합니다.
+## 3. 강사용 Terraform 준비
 
-## 5. 강사용 Terraform 준비
+강사는 Terraform으로 실습 바닥 구성을 만듭니다. 이 단계가 끝나면 수강생이 쓸 VPC ID, subnet ID, route table ID, EC2 private IP가 output으로 나옵니다.
 
 ```bash
 git clone https://github.com/gasbugs/mulcam-aws-cloud-security-terraform.git
@@ -119,9 +87,7 @@ terraform init
 terraform apply
 ```
 
-`terraform apply`가 생성 계획을 보여주면 `yes`를 입력합니다.
-
-수강생 CLI 실습에 필요한 값을 shell 환경변수 파일로 저장합니다.
+수강생 명령에서 계속 쓸 값을 환경변수 파일로 저장합니다. 강사는 이 파일 내용을 수강생에게 전달하거나, 수강생이 같은 Terraform 디렉토리에서 직접 생성하게 합니다.
 
 ```bash
 terraform output -raw cli_export_commands > /tmp/fa01hc-inspection-firewall.env
@@ -130,50 +96,25 @@ source /tmp/fa01hc-inspection-firewall.env
 env | grep -E '^(APP_|SHARED_|INSPECTION_|TGW_|FIREWALL_|NETWORK_|AWS_REGION=|PROJECT_NAME=)' | sort
 ```
 
-강사는 `/tmp/fa01hc-inspection-firewall.env` 내용을 수강생에게 전달하거나, 수강생이 같은 Terraform 디렉토리에서 위 명령을 직접 실행하게 합니다.
-
-Terraform apply 직후에는 EC2 instance profile과 SSM endpoint DNS 인식이 늦을 수 있습니다. App/Shared 인스턴스를 한 번 재부팅한 뒤 SSM Online 상태를 확인합니다.
+Terraform apply 직후에는 EC2 instance profile과 SSM endpoint DNS 반영이 늦을 수 있습니다. 아래 명령은 App/Shared 인스턴스가 SSM 명령을 받을 수 있는 상태인지 확인합니다.
 
 ```bash
-aws ec2 reboot-instances \
-  --instance-ids "$APP_INSTANCE_ID" "$SHARED_INSTANCE_ID" \
-  --region "$AWS_REGION"
-
 aws ec2 wait instance-status-ok \
   --instance-ids "$APP_INSTANCE_ID" "$SHARED_INSTANCE_ID" \
   --region "$AWS_REGION"
+
+aws ssm describe-instance-information \
+  --filters "Key=InstanceIds,Values=$APP_INSTANCE_ID,$SHARED_INSTANCE_ID" \
+  --query "InstanceInformationList[].{Id:InstanceId,Status:PingStatus}" \
+  --output table \
+  --region "$AWS_REGION"
 ```
 
-```bash
-wait_ssm_online() {
-  local instance_id="$1"
-  local status=""
+`PingStatus`가 `Online`이면 SSM Run Command를 실행할 준비가 된 것입니다. `None` 또는 빈 값이면 1-2분 뒤 다시 확인합니다.
 
-  for i in {1..40}; do
-    status=$(aws ssm describe-instance-information \
-      --filters "Key=InstanceIds,Values=$instance_id" \
-      --query "InstanceInformationList[0].PingStatus" \
-      --output text \
-      --region "$AWS_REGION")
+## 4. Transit Gateway 생성
 
-    echo "$instance_id $status"
-
-    if [ "$status" = "Online" ]; then
-      return 0
-    fi
-
-    sleep 15
-  done
-
-  echo "SSM Agent가 Online 상태가 아닙니다: $instance_id $status"
-  return 1
-}
-
-wait_ssm_online "$APP_INSTANCE_ID"
-wait_ssm_online "$SHARED_INSTANCE_ID"
-```
-
-## 6. Transit Gateway 생성
+Transit Gateway는 여러 VPC를 연결하는 중앙 라우터 역할을 합니다. 기본 route table 자동 연결과 자동 전파를 꺼서, 실습자가 어떤 attachment가 어떤 route table을 쓰는지 직접 제어하게 합니다.
 
 ```bash
 TGW_ID=$(aws ec2 create-transit-gateway \
@@ -187,7 +128,7 @@ TGW_ID=$(aws ec2 create-transit-gateway \
 echo "$TGW_ID"
 ```
 
-Transit Gateway가 `available` 상태가 될 때까지 기다립니다.
+생성 직후에는 `pending`입니다. `available`이 되어야 attachment와 route table을 안정적으로 만들 수 있습니다.
 
 ```bash
 for i in {1..40}; do
@@ -196,32 +137,23 @@ for i in {1..40}; do
     --query "TransitGateways[0].State" \
     --output text \
     --region "$AWS_REGION")
-
   echo "$TGW_STATE"
-
-  if [ "$TGW_STATE" = "available" ]; then
-    break
-  fi
-
+  [ "$TGW_STATE" = "available" ] && break
   sleep 15
 done
 
-if [ "$TGW_STATE" != "available" ]; then
-  echo "Transit Gateway 상태를 확인하세요: $TGW_STATE"
-  exit 1
-fi
+[ "$TGW_STATE" = "available" ] || exit 1
 ```
 
-## 7. TGW VPC Attachment 생성
+## 5. TGW VPC Attachment 생성
 
-App VPC와 Shared VPC attachment는 일반 모드로 만들고, Inspection VPC attachment는 반드시 appliance mode를 활성화합니다. 중앙 방화벽 구조에서는 요청과 응답이 같은 방화벽 경로를 타야 하므로 이 설정이 중요합니다.
+Attachment는 VPC를 TGW에 꽂는 연결부입니다. App과 Shared는 일반 attachment로 만들고, Inspection attachment만 appliance mode를 켭니다. appliance mode는 방화벽처럼 중간 장비를 지나는 트래픽의 왕복 경로를 안정적으로 유지하는 설정입니다.
 
 ```bash
 APP_TGW_ATTACHMENT_ID=$(aws ec2 create-transit-gateway-vpc-attachment \
   --transit-gateway-id "$TGW_ID" \
   --vpc-id "$APP_VPC_ID" \
   --subnet-ids "$APP_TGW_SUBNET_ID" \
-  --options "DnsSupport=enable,SecurityGroupReferencingSupport=disable,Ipv6Support=disable,ApplianceModeSupport=disable" \
   --tag-specifications "ResourceType=transit-gateway-attachment,Tags=[{Key=Name,Value=$TGW_APP_ATTACHMENT_NAME},{Key=Course,Value=FA01HC},{Key=Unit,Value=inspection-firewall-cli}]" \
   --query "TransitGatewayVpcAttachment.TransitGatewayAttachmentId" \
   --output text \
@@ -231,17 +163,18 @@ SHARED_TGW_ATTACHMENT_ID=$(aws ec2 create-transit-gateway-vpc-attachment \
   --transit-gateway-id "$TGW_ID" \
   --vpc-id "$SHARED_VPC_ID" \
   --subnet-ids "$SHARED_TGW_SUBNET_ID" \
-  --options "DnsSupport=enable,SecurityGroupReferencingSupport=disable,Ipv6Support=disable,ApplianceModeSupport=disable" \
   --tag-specifications "ResourceType=transit-gateway-attachment,Tags=[{Key=Name,Value=$TGW_SHARED_ATTACHMENT_NAME},{Key=Course,Value=FA01HC},{Key=Unit,Value=inspection-firewall-cli}]" \
   --query "TransitGatewayVpcAttachment.TransitGatewayAttachmentId" \
   --output text \
   --region "$AWS_REGION")
+```
 
+```bash
 INSPECTION_TGW_ATTACHMENT_ID=$(aws ec2 create-transit-gateway-vpc-attachment \
   --transit-gateway-id "$TGW_ID" \
   --vpc-id "$INSPECTION_VPC_ID" \
   --subnet-ids "$INSPECTION_TGW_SUBNET_ID" \
-  --options "DnsSupport=enable,SecurityGroupReferencingSupport=disable,Ipv6Support=disable,ApplianceModeSupport=enable" \
+  --options ApplianceModeSupport=enable \
   --tag-specifications "ResourceType=transit-gateway-attachment,Tags=[{Key=Name,Value=$TGW_INSPECTION_ATTACHMENT_NAME},{Key=Course,Value=FA01HC},{Key=Unit,Value=inspection-firewall-cli}]" \
   --query "TransitGatewayVpcAttachment.TransitGatewayAttachmentId" \
   --output text \
@@ -250,44 +183,27 @@ INSPECTION_TGW_ATTACHMENT_ID=$(aws ec2 create-transit-gateway-vpc-attachment \
 printf "%s\n" "$APP_TGW_ATTACHMENT_ID" "$SHARED_TGW_ATTACHMENT_ID" "$INSPECTION_TGW_ATTACHMENT_ID"
 ```
 
-Attachment가 `available` 상태가 될 때까지 기다립니다.
+세 attachment가 모두 `available`이 될 때까지 기다립니다. 하나라도 `failed`가 나오면 VPC ID와 subnet ID를 잘못 넣은 것입니다.
 
 ```bash
-wait_tgw_attachment_available() {
-  local attachment_id="$1"
-  local state=""
-
+for attachment_id in "$APP_TGW_ATTACHMENT_ID" "$SHARED_TGW_ATTACHMENT_ID" "$INSPECTION_TGW_ATTACHMENT_ID"; do
   for i in {1..40}; do
     state=$(aws ec2 describe-transit-gateway-vpc-attachments \
       --transit-gateway-attachment-ids "$attachment_id" \
       --query "TransitGatewayVpcAttachments[0].State" \
       --output text \
       --region "$AWS_REGION")
-
     echo "$attachment_id $state"
-
-    if [ "$state" = "available" ]; then
-      return 0
-    fi
-
-    if [ "$state" = "failed" ] || [ "$state" = "rejected" ]; then
-      echo "TGW attachment 생성 실패: $attachment_id $state"
-      return 1
-    fi
-
+    [ "$state" = "available" ] && break
+    [ "$state" = "failed" ] && exit 1
     sleep 15
   done
-
-  echo "TGW attachment 상태를 확인하세요: $attachment_id $state"
-  return 1
-}
-
-wait_tgw_attachment_available "$APP_TGW_ATTACHMENT_ID"
-wait_tgw_attachment_available "$SHARED_TGW_ATTACHMENT_ID"
-wait_tgw_attachment_available "$INSPECTION_TGW_ATTACHMENT_ID"
+done
 ```
 
-## 8. TGW Route Table 생성과 Association
+## 6. TGW Route Table 생성과 연결
+
+TGW route table은 TGW 안에서 목적지를 판단하는 표입니다. 이 실습에서는 workload에서 출발한 트래픽용 route table과, inspection을 통과한 뒤 최종 목적지로 보내는 route table을 분리합니다.
 
 ```bash
 WORKLOAD_TGW_RT_ID=$(aws ec2 create-transit-gateway-route-table \
@@ -307,43 +223,7 @@ INSPECTION_TGW_RT_ID_STUDENT=$(aws ec2 create-transit-gateway-route-table \
 printf "%s\n" "$WORKLOAD_TGW_RT_ID" "$INSPECTION_TGW_RT_ID_STUDENT"
 ```
 
-TGW route table이 `available` 상태가 될 때까지 기다립니다.
-
-```bash
-wait_tgw_route_table_available() {
-  local route_table_id="$1"
-  local state=""
-
-  for i in {1..40}; do
-    state=$(aws ec2 describe-transit-gateway-route-tables \
-      --transit-gateway-route-table-ids "$route_table_id" \
-      --query "TransitGatewayRouteTables[0].State" \
-      --output text \
-      --region "$AWS_REGION")
-
-    echo "$route_table_id $state"
-
-    if [ "$state" = "available" ]; then
-      return 0
-    fi
-
-    if [ "$state" = "failed" ] || [ "$state" = "deleted" ]; then
-      echo "TGW route table 상태를 확인하세요: $route_table_id $state"
-      return 1
-    fi
-
-    sleep 10
-  done
-
-  echo "TGW route table available 대기 시간이 초과되었습니다: $route_table_id $state"
-  return 1
-}
-
-wait_tgw_route_table_available "$WORKLOAD_TGW_RT_ID"
-wait_tgw_route_table_available "$INSPECTION_TGW_RT_ID_STUDENT"
-```
-
-App/Shared attachment는 workload용 TGW route table에 연결하고, Inspection attachment는 inspection용 TGW route table에 연결합니다.
+association은 attachment가 사용할 TGW route table을 정하는 작업입니다. App/Shared에서 출발하는 트래픽은 workload route table을 보고, Inspection에서 TGW로 돌아오는 트래픽은 inspection route table을 봅니다.
 
 ```bash
 aws ec2 associate-transit-gateway-route-table \
@@ -362,9 +242,9 @@ aws ec2 associate-transit-gateway-route-table \
   --region "$AWS_REGION"
 ```
 
-## 9. Network Firewall Rule Group 생성
+## 7. Network Firewall Rule Group 생성
 
-App VPC와 Shared VPC 사이 ICMP 트래픽만 통과시키는 stateful rule group을 만듭니다.
+Rule group은 방화벽 규칙 모음입니다. 여기서는 ICMP, 즉 ping 트래픽만 App CIDR과 Shared CIDR 사이에서 허용합니다. 다른 트래픽은 뒤에서 policy 기본 동작으로 차단됩니다.
 
 ```bash
 cat > /tmp/fa01hc-icmp-stateful-rule-group.json <<EOF
@@ -377,7 +257,9 @@ cat > /tmp/fa01hc-icmp-stateful-rule-group.json <<EOF
   }
 }
 EOF
+```
 
+```bash
 RULE_GROUP_ARN=$(aws network-firewall create-rule-group \
   --rule-group-name "$FIREWALL_RULE_GROUP_NAME" \
   --type STATEFUL \
@@ -391,26 +273,25 @@ RULE_GROUP_ARN=$(aws network-firewall create-rule-group \
 echo "$RULE_GROUP_ARN"
 ```
 
-## 10. Firewall Policy 생성
+## 8. Firewall Policy 생성
+
+Firewall policy는 rule group을 실제 방화벽에 연결하는 설정입니다. stateless 단계는 stateful engine으로 넘기고, stateful 단계에서는 규칙에 맞지 않는 트래픽을 차단합니다.
 
 ```bash
 cat > /tmp/fa01hc-firewall-policy.json <<EOF
 {
   "StatelessDefaultActions": ["aws:forward_to_sfe"],
   "StatelessFragmentDefaultActions": ["aws:forward_to_sfe"],
-  "StatefulEngineOptions": {
-    "RuleOrder": "STRICT_ORDER"
-  },
+  "StatefulEngineOptions": {"RuleOrder": "STRICT_ORDER"},
   "StatefulDefaultActions": ["aws:drop_strict"],
   "StatefulRuleGroupReferences": [
-    {
-      "ResourceArn": "$RULE_GROUP_ARN",
-      "Priority": 100
-    }
+    {"ResourceArn": "$RULE_GROUP_ARN", "Priority": 100}
   ]
 }
 EOF
+```
 
+```bash
 FIREWALL_POLICY_ARN=$(aws network-firewall create-firewall-policy \
   --firewall-policy-name "$FIREWALL_POLICY_NAME" \
   --firewall-policy file:///tmp/fa01hc-firewall-policy.json \
@@ -422,9 +303,9 @@ FIREWALL_POLICY_ARN=$(aws network-firewall create-firewall-policy \
 echo "$FIREWALL_POLICY_ARN"
 ```
 
-## 11. Network Firewall 생성
+## 9. Network Firewall 생성
 
-Inspection VPC의 firewall subnet에 Network Firewall endpoint를 만듭니다.
+Network Firewall은 Inspection VPC의 firewall subnet에 endpoint를 만듭니다. 이 endpoint가 실제 패킷이 통과하는 방화벽 입구입니다.
 
 ```bash
 FIREWALL_ARN=$(aws network-firewall create-firewall \
@@ -443,38 +324,22 @@ FIREWALL_ARN=$(aws network-firewall create-firewall \
 echo "$FIREWALL_ARN"
 ```
 
-Firewall과 endpoint가 `READY` 상태가 될 때까지 기다립니다.
+Firewall과 endpoint가 모두 `READY`가 되어야 라우팅에 endpoint ID를 넣을 수 있습니다. 테스트에서는 이 단계가 몇 분 걸렸습니다.
 
 ```bash
 for i in {1..60}; do
   FIREWALL_STATUS=$(aws network-firewall describe-firewall \
     --firewall-name "$NETWORK_FIREWALL_NAME" \
-    --query "FirewallStatus.Status" \
-    --output text \
-    --region "$AWS_REGION")
-
+    --query "FirewallStatus.Status" --output text --region "$AWS_REGION")
   FIREWALL_ENDPOINT_STATUS=$(aws network-firewall describe-firewall \
     --firewall-name "$NETWORK_FIREWALL_NAME" \
     --query "FirewallStatus.SyncStates.\"$INSPECTION_FIREWALL_AZ\".Attachment.Status" \
-    --output text \
-    --region "$AWS_REGION")
-
+    --output text --region "$AWS_REGION")
   echo "$FIREWALL_STATUS $FIREWALL_ENDPOINT_STATUS"
-
-  if [ "$FIREWALL_STATUS" = "READY" ] && [ "$FIREWALL_ENDPOINT_STATUS" = "READY" ]; then
-    break
-  fi
-
+  [ "$FIREWALL_STATUS" = "READY" ] && [ "$FIREWALL_ENDPOINT_STATUS" = "READY" ] && break
   sleep 20
 done
-
-if [ "$FIREWALL_STATUS" != "READY" ] || [ "$FIREWALL_ENDPOINT_STATUS" != "READY" ]; then
-  echo "Network Firewall 상태를 확인하세요: $FIREWALL_STATUS $FIREWALL_ENDPOINT_STATUS"
-  exit 1
-fi
 ```
-
-VPC route table의 firewall endpoint target으로 사용할 endpoint ID를 가져옵니다.
 
 ```bash
 FIREWALL_ENDPOINT_ID=$(aws network-firewall describe-firewall \
@@ -486,13 +351,9 @@ FIREWALL_ENDPOINT_ID=$(aws network-firewall describe-firewall \
 echo "$FIREWALL_ENDPOINT_ID"
 ```
 
-## 12. 라우팅 구성
+## 10. 라우팅 구성
 
-라우팅은 반드시 양방향으로 맞아야 합니다. 아래 명령 전체를 실행합니다.
-
-### 12.1 Workload VPC private route table
-
-App VPC에서 Shared VPC로, Shared VPC에서 App VPC로 향하는 트래픽을 TGW로 보냅니다.
+라우팅은 왕복 경로가 모두 맞아야 합니다. App/Shared private subnet은 상대 VPC CIDR을 TGW로 보내고, TGW는 workload 트래픽을 먼저 Inspection attachment로 보냅니다.
 
 ```bash
 aws ec2 create-route \
@@ -506,13 +367,7 @@ aws ec2 create-route \
   --destination-cidr-block "$APP_CIDR" \
   --transit-gateway-id "$TGW_ID" \
   --region "$AWS_REGION"
-```
 
-### 12.2 TGW workload route table
-
-Workload에서 출발한 트래픽은 먼저 Inspection VPC attachment로 보내야 합니다.
-
-```bash
 aws ec2 create-transit-gateway-route \
   --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" \
   --destination-cidr-block "0.0.0.0/0" \
@@ -520,9 +375,7 @@ aws ec2 create-transit-gateway-route \
   --region "$AWS_REGION"
 ```
 
-### 12.3 Inspection VPC TGW attachment subnet route table
-
-TGW attachment subnet으로 들어온 트래픽을 바로 TGW로 되돌리지 않고 Network Firewall endpoint로 보냅니다.
+Inspection VPC 안에서는 TGW subnet으로 들어온 트래픽을 Firewall endpoint로 보냅니다. Firewall subnet에서 나온 트래픽은 다시 TGW로 돌아가야 최종 목적지 VPC로 갈 수 있습니다.
 
 ```bash
 aws ec2 create-route \
@@ -530,13 +383,7 @@ aws ec2 create-route \
   --destination-cidr-block "0.0.0.0/0" \
   --vpc-endpoint-id "$FIREWALL_ENDPOINT_ID" \
   --region "$AWS_REGION"
-```
 
-### 12.4 Inspection VPC firewall subnet route table
-
-Firewall을 통과한 트래픽은 다시 Transit Gateway로 보내야 최종 목적지 VPC attachment로 전달됩니다.
-
-```bash
 aws ec2 create-route \
   --route-table-id "$INSPECTION_FIREWALL_RT_ID" \
   --destination-cidr-block "0.0.0.0/0" \
@@ -544,9 +391,7 @@ aws ec2 create-route \
   --region "$AWS_REGION"
 ```
 
-### 12.5 TGW inspection route table
-
-Inspection VPC에서 TGW로 돌아온 트래픽은 목적지 Workload VPC attachment로 보냅니다.
+Inspection attachment를 통해 TGW로 돌아온 트래픽은 실제 목적지인 App 또는 Shared attachment로 보내야 합니다.
 
 ```bash
 aws ec2 create-transit-gateway-route \
@@ -562,182 +407,140 @@ aws ec2 create-transit-gateway-route \
   --region "$AWS_REGION"
 ```
 
-### 12.6 Route 상태 확인과 안정화 대기
-
-TGW route table association과 VPC route가 데이터 플레인에 반영될 시간을 잠시 둡니다.
+라우팅이 데이터 플레인에 반영될 시간을 줍니다. 테스트에서는 120초 대기 후 첫 App -> Shared ping이 실패했고, 1분 뒤 재시도에서 성공했습니다.
 
 ```bash
-aws ec2 describe-route-tables \
-  --route-table-ids "$APP_PRIVATE_RT_ID" "$SHARED_PRIVATE_RT_ID" "$INSPECTION_TGW_RT_ID" "$INSPECTION_FIREWALL_RT_ID" \
-  --query "RouteTables[].{RouteTableId:RouteTableId,Routes:Routes[].{Destination:DestinationCidrBlock,TransitGatewayId:TransitGatewayId,VpcEndpointId:VpcEndpointId,State:State}}" \
-  --output table \
-  --region "$AWS_REGION"
-
 aws ec2 search-transit-gateway-routes \
   --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" \
   --filters "Name=state,Values=active" \
-  --query "Routes[].{Destination:DestinationCidrBlock,Attachment:TransitGatewayAttachments[0].TransitGatewayAttachmentId,State:State}" \
   --output table \
   --region "$AWS_REGION"
 
 aws ec2 search-transit-gateway-routes \
   --transit-gateway-route-table-id "$INSPECTION_TGW_RT_ID_STUDENT" \
   --filters "Name=state,Values=active" \
-  --query "Routes[].{Destination:DestinationCidrBlock,Attachment:TransitGatewayAttachments[0].TransitGatewayAttachmentId,State:State}" \
   --output table \
   --region "$AWS_REGION"
 
 sleep 120
 ```
 
-## 13. 통신 테스트
+## 11. 통신 테스트
 
-Session Manager shell을 열지 않고 SSM Run Command로 ping을 실행합니다. Network Firewall endpoint와 TGW route가 반영된 직후에는 첫 번째 ping이 실패할 수 있으므로 1분 간격으로 재시도합니다.
+SSM Run Command로 private EC2 안에서 ping을 실행합니다. 인스턴스에는 public IP가 없으므로 로컬 PC에서 직접 ping하는 방식이 아닙니다.
 
 ```bash
-run_ping_until_success() {
-  local source_instance_id="$1"
-  local destination_ip="$2"
-  local label="$3"
-  local command_id=""
-  local status=""
+command_id=$(aws ssm send-command \
+  --instance-ids "$APP_INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters "commands=ping -c 5 $SHARED_PRIVATE_IP" \
+  --query "Command.CommandId" \
+  --output text \
+  --region "$AWS_REGION")
 
-  for attempt in {1..10}; do
-    echo "ping $label attempt $attempt"
-
-    command_id=$(aws ssm send-command \
-      --instance-ids "$source_instance_id" \
-      --document-name "AWS-RunShellScript" \
-      --parameters "commands=ping -c 5 $destination_ip" \
-      --query "Command.CommandId" \
-      --output text \
-      --region "$AWS_REGION")
-
-    aws ssm wait command-executed \
-      --command-id "$command_id" \
-      --instance-id "$source_instance_id" \
-      --region "$AWS_REGION" || true
-
-    aws ssm get-command-invocation \
-      --command-id "$command_id" \
-      --instance-id "$source_instance_id" \
-      --query "StandardOutputContent" \
-      --output text \
-      --region "$AWS_REGION"
-
-    aws ssm get-command-invocation \
-      --command-id "$command_id" \
-      --instance-id "$source_instance_id" \
-      --query "StandardErrorContent" \
-      --output text \
-      --region "$AWS_REGION"
-
-    status=$(aws ssm get-command-invocation \
-      --command-id "$command_id" \
-      --instance-id "$source_instance_id" \
-      --query "Status" \
-      --output text \
-      --region "$AWS_REGION")
-
-    if [ "$status" = "Success" ]; then
-      return 0
-    fi
-
-    sleep 60
-  done
-
-  return 1
-}
-
-run_ping_until_success "$APP_INSTANCE_ID" "$SHARED_PRIVATE_IP" "app -> shared"
-run_ping_until_success "$SHARED_INSTANCE_ID" "$APP_PRIVATE_IP" "shared -> app"
+aws ssm wait command-executed \
+  --command-id "$command_id" \
+  --instance-id "$APP_INSTANCE_ID" \
+  --region "$AWS_REGION" || true
 ```
 
-정상이라면 `5 packets transmitted, 5 received` 또는 일부 초기 packet loss 이후 `received`가 1개 이상 있는 형태가 출력됩니다.
-
-## 14. 상태 확인 명령
-
 ```bash
-aws ec2 describe-transit-gateway-vpc-attachments \
-  --transit-gateway-attachment-ids "$APP_TGW_ATTACHMENT_ID" "$SHARED_TGW_ATTACHMENT_ID" "$INSPECTION_TGW_ATTACHMENT_ID" \
-  --query "TransitGatewayVpcAttachments[].{Id:TransitGatewayAttachmentId,State:State,VpcId:VpcId}" \
-  --output table \
-  --region "$AWS_REGION"
-
-aws network-firewall describe-firewall \
-  --firewall-name "$NETWORK_FIREWALL_NAME" \
-  --query "FirewallStatus.{Status:Status,Sync:ConfigurationSyncStateSummary,Endpoint:SyncStates}" \
-  --output table \
+aws ssm get-command-invocation \
+  --command-id "$command_id" \
+  --instance-id "$APP_INSTANCE_ID" \
+  --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
+  --output text \
   --region "$AWS_REGION"
 ```
 
-## 15. 문제 해결
+반대 방향도 확인합니다. 양방향이 모두 성공해야 route가 제대로 맞은 것입니다.
+
+```bash
+command_id=$(aws ssm send-command \
+  --instance-ids "$SHARED_INSTANCE_ID" \
+  --document-name "AWS-RunShellScript" \
+  --parameters "commands=ping -c 5 $APP_PRIVATE_IP" \
+  --query "Command.CommandId" \
+  --output text \
+  --region "$AWS_REGION")
+
+aws ssm wait command-executed \
+  --command-id "$command_id" \
+  --instance-id "$SHARED_INSTANCE_ID" \
+  --region "$AWS_REGION" || true
+```
+
+```bash
+aws ssm get-command-invocation \
+  --command-id "$command_id" \
+  --instance-id "$SHARED_INSTANCE_ID" \
+  --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
+  --output text \
+  --region "$AWS_REGION"
+```
+
+정상 결과는 `5 packets transmitted, 5 received, 0% packet loss`입니다. 첫 시도에서 `100% packet loss`가 나오면 1분 뒤 같은 명령을 다시 실행합니다.
+
+## 12. 문제 해결
 
 | 증상 | 확인할 항목 |
 | --- | --- |
-| SSM 명령이 실패함 | EC2 running 상태, SSM Agent Online 상태, Terraform이 만든 SSM endpoint 상태 확인 |
+| SSM 명령이 실패함 | EC2 running 상태, SSM Agent `Online`, SSM endpoint 상태 |
 | TGW attachment가 `available`이 아님 | attachment subnet ID와 VPC ID가 올바른지 확인 |
-| Network Firewall이 `READY`가 아님 | firewall subnet, firewall policy ARN, rule group 상태 확인 |
-| `FIREWALL_ENDPOINT_ID`가 `None` | Firewall endpoint attachment 상태가 `READY`가 될 때까지 대기 |
+| Network Firewall이 `READY`가 아님 | firewall subnet, firewall policy ARN, rule group 상태 |
+| `FIREWALL_ENDPOINT_ID`가 `None` | Firewall endpoint attachment가 `READY`가 될 때까지 대기 |
 | ping timeout | Workload private route table이 TGW를 가리키는지 확인 |
 | ping timeout | TGW workload route table이 Inspection attachment를 가리키는지 확인 |
-| ping timeout | Inspection TGW attachment subnet route table이 Firewall endpoint를 가리키는지 확인 |
+| ping timeout | Inspection TGW subnet route table이 Firewall endpoint를 가리키는지 확인 |
 | ping timeout | Inspection firewall subnet route table이 TGW를 가리키는지 확인 |
-| ping timeout | TGW inspection route table이 App/Shared attachment를 가리키는지 확인 |
-| 한 방향만 성공 | 반대 방향 라우팅이 누락되었는지 확인 |
+| 한 방향만 성공 | 반대 방향 TGW route 또는 VPC route 누락 확인 |
 
-## 16. AWS CLI로 직접 만든 리소스 정리
+## 13. AWS CLI 리소스 정리
 
-수강생이 AWS CLI로 만든 리소스는 Terraform state에 없습니다. 먼저 CLI 리소스를 삭제하고, 마지막에 Terraform 리소스를 삭제합니다.
-
-동일 터미널이 아니라면 먼저 환경변수를 다시 불러옵니다.
+수강생이 AWS CLI로 만든 리소스는 Terraform state에 없습니다. 반드시 먼저 CLI 리소스를 삭제하고, 마지막에 Terraform 리소스를 삭제합니다.
 
 ```bash
 source /tmp/fa01hc-inspection-firewall.env
 export AWS_PAGER=""
 ```
 
-동적으로 생성한 TGW 관련 ID 변수가 없다면 이름 태그로 다시 조회합니다.
+같은 터미널을 계속 쓰고 있다면 아래 ID 변수들이 이미 있습니다. 새 터미널이면 태그 이름으로 다시 조회합니다.
 
 ```bash
 TGW_ID=${TGW_ID:-$(aws ec2 describe-transit-gateways \
   --filters "Name=tag:Name,Values=$TGW_NAME" \
   --query "TransitGateways[?State!='deleted'].TransitGatewayId | [0]" \
-  --output text \
-  --region "$AWS_REGION")}
-
-APP_TGW_ATTACHMENT_ID=${APP_TGW_ATTACHMENT_ID:-$(aws ec2 describe-transit-gateway-vpc-attachments \
-  --filters "Name=tag:Name,Values=$TGW_APP_ATTACHMENT_NAME" \
-  --query "TransitGatewayVpcAttachments[?State!='deleted'].TransitGatewayAttachmentId | [0]" \
-  --output text \
-  --region "$AWS_REGION")}
-
-SHARED_TGW_ATTACHMENT_ID=${SHARED_TGW_ATTACHMENT_ID:-$(aws ec2 describe-transit-gateway-vpc-attachments \
-  --filters "Name=tag:Name,Values=$TGW_SHARED_ATTACHMENT_NAME" \
-  --query "TransitGatewayVpcAttachments[?State!='deleted'].TransitGatewayAttachmentId | [0]" \
-  --output text \
-  --region "$AWS_REGION")}
-
-INSPECTION_TGW_ATTACHMENT_ID=${INSPECTION_TGW_ATTACHMENT_ID:-$(aws ec2 describe-transit-gateway-vpc-attachments \
-  --filters "Name=tag:Name,Values=$TGW_INSPECTION_ATTACHMENT_NAME" \
-  --query "TransitGatewayVpcAttachments[?State!='deleted'].TransitGatewayAttachmentId | [0]" \
-  --output text \
-  --region "$AWS_REGION")}
+  --output text --region "$AWS_REGION")}
 
 WORKLOAD_TGW_RT_ID=${WORKLOAD_TGW_RT_ID:-$(aws ec2 describe-transit-gateway-route-tables \
   --filters "Name=tag:Name,Values=$TGW_FROM_WORKLOADS_RT_NAME" \
   --query "TransitGatewayRouteTables[?State!='deleted'].TransitGatewayRouteTableId | [0]" \
-  --output text \
-  --region "$AWS_REGION")}
+  --output text --region "$AWS_REGION")}
 
 INSPECTION_TGW_RT_ID_STUDENT=${INSPECTION_TGW_RT_ID_STUDENT:-$(aws ec2 describe-transit-gateway-route-tables \
   --filters "Name=tag:Name,Values=$TGW_FROM_INSPECTION_RT_NAME" \
   --query "TransitGatewayRouteTables[?State!='deleted'].TransitGatewayRouteTableId | [0]" \
-  --output text \
-  --region "$AWS_REGION")}
+  --output text --region "$AWS_REGION")}
 ```
 
-VPC route와 TGW route를 삭제합니다.
+```bash
+APP_TGW_ATTACHMENT_ID=${APP_TGW_ATTACHMENT_ID:-$(aws ec2 describe-transit-gateway-vpc-attachments \
+  --filters "Name=tag:Name,Values=$TGW_APP_ATTACHMENT_NAME" \
+  --query "TransitGatewayVpcAttachments[?State!='deleted'].TransitGatewayAttachmentId | [0]" \
+  --output text --region "$AWS_REGION")}
+
+SHARED_TGW_ATTACHMENT_ID=${SHARED_TGW_ATTACHMENT_ID:-$(aws ec2 describe-transit-gateway-vpc-attachments \
+  --filters "Name=tag:Name,Values=$TGW_SHARED_ATTACHMENT_NAME" \
+  --query "TransitGatewayVpcAttachments[?State!='deleted'].TransitGatewayAttachmentId | [0]" \
+  --output text --region "$AWS_REGION")}
+
+INSPECTION_TGW_ATTACHMENT_ID=${INSPECTION_TGW_ATTACHMENT_ID:-$(aws ec2 describe-transit-gateway-vpc-attachments \
+  --filters "Name=tag:Name,Values=$TGW_INSPECTION_ATTACHMENT_NAME" \
+  --query "TransitGatewayVpcAttachments[?State!='deleted'].TransitGatewayAttachmentId | [0]" \
+  --output text --region "$AWS_REGION")}
+```
+
+먼저 route를 삭제합니다. route가 남아 있으면 attachment나 TGW 삭제가 막힐 수 있습니다.
 
 ```bash
 aws ec2 delete-route --route-table-id "$APP_PRIVATE_RT_ID" --destination-cidr-block "$SHARED_CIDR" --region "$AWS_REGION" || true
@@ -750,15 +553,26 @@ aws ec2 delete-transit-gateway-route --transit-gateway-route-table-id "$INSPECTI
 aws ec2 delete-transit-gateway-route --transit-gateway-route-table-id "$INSPECTION_TGW_RT_ID_STUDENT" --destination-cidr-block "$SHARED_CIDR" --region "$AWS_REGION" || true
 ```
 
-TGW route table association을 해제합니다.
+association을 해제합니다. association은 attachment와 TGW route table의 연결 관계입니다.
 
 ```bash
-aws ec2 disassociate-transit-gateway-route-table --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" --transit-gateway-attachment-id "$APP_TGW_ATTACHMENT_ID" --region "$AWS_REGION" || true
-aws ec2 disassociate-transit-gateway-route-table --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" --transit-gateway-attachment-id "$SHARED_TGW_ATTACHMENT_ID" --region "$AWS_REGION" || true
-aws ec2 disassociate-transit-gateway-route-table --transit-gateway-route-table-id "$INSPECTION_TGW_RT_ID_STUDENT" --transit-gateway-attachment-id "$INSPECTION_TGW_ATTACHMENT_ID" --region "$AWS_REGION" || true
+aws ec2 disassociate-transit-gateway-route-table \
+  --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" \
+  --transit-gateway-attachment-id "$APP_TGW_ATTACHMENT_ID" \
+  --region "$AWS_REGION" || true
+
+aws ec2 disassociate-transit-gateway-route-table \
+  --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" \
+  --transit-gateway-attachment-id "$SHARED_TGW_ATTACHMENT_ID" \
+  --region "$AWS_REGION" || true
+
+aws ec2 disassociate-transit-gateway-route-table \
+  --transit-gateway-route-table-id "$INSPECTION_TGW_RT_ID_STUDENT" \
+  --transit-gateway-attachment-id "$INSPECTION_TGW_ATTACHMENT_ID" \
+  --region "$AWS_REGION" || true
 ```
 
-Network Firewall을 삭제합니다.
+Network Firewall은 삭제가 몇 분 걸릴 수 있습니다. Firewall 삭제가 끝난 뒤 policy와 rule group을 삭제합니다.
 
 ```bash
 aws network-firewall delete-firewall \
@@ -766,63 +580,59 @@ aws network-firewall delete-firewall \
   --region "$AWS_REGION" || true
 
 for i in {1..40}; do
-  if ! aws network-firewall describe-firewall \
+  aws network-firewall describe-firewall \
     --firewall-name "$NETWORK_FIREWALL_NAME" \
-    --region "$AWS_REGION" >/dev/null 2>&1; then
-    break
-  fi
-
+    --region "$AWS_REGION" >/dev/null 2>&1 || break
   echo "waiting for firewall deletion"
   sleep 30
 done
+```
 
+```bash
 aws network-firewall delete-firewall-policy \
   --firewall-policy-name "$FIREWALL_POLICY_NAME" \
   --region "$AWS_REGION" || true
 
-aws network-firewall delete-rule-group \
-  --rule-group-name "$FIREWALL_RULE_GROUP_NAME" \
-  --type STATEFUL \
-  --region "$AWS_REGION" || true
+for i in {1..20}; do
+  aws network-firewall delete-rule-group \
+    --rule-group-name "$FIREWALL_RULE_GROUP_NAME" \
+    --type STATEFUL \
+    --region "$AWS_REGION" && break
+  echo "waiting for rule group release"
+  sleep 30
+done
 ```
 
-TGW attachment, TGW route table, TGW를 삭제합니다.
+TGW attachment를 삭제합니다. attachment가 `deleted`가 될 때까지 기다린 뒤 route table과 TGW를 삭제합니다.
 
 ```bash
 aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$APP_TGW_ATTACHMENT_ID" --region "$AWS_REGION" || true
 aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$SHARED_TGW_ATTACHMENT_ID" --region "$AWS_REGION" || true
 aws ec2 delete-transit-gateway-vpc-attachment --transit-gateway-attachment-id "$INSPECTION_TGW_ATTACHMENT_ID" --region "$AWS_REGION" || true
 
-wait_tgw_attachment_deleted() {
-  local attachment_id="$1"
-  local state=""
-
+for attachment_id in "$APP_TGW_ATTACHMENT_ID" "$SHARED_TGW_ATTACHMENT_ID" "$INSPECTION_TGW_ATTACHMENT_ID"; do
   for i in {1..40}; do
     state=$(aws ec2 describe-transit-gateway-vpc-attachments \
       --transit-gateway-attachment-ids "$attachment_id" \
       --query "TransitGatewayVpcAttachments[0].State" \
-      --output text \
-      --region "$AWS_REGION" 2>/dev/null || echo "deleted")
-
+      --output text --region "$AWS_REGION" 2>/dev/null || echo deleted)
     echo "$attachment_id $state"
-
-    if [ "$state" = "deleted" ] || [ "$state" = "None" ] || [ "$state" = "failed" ]; then
-      return 0
-    fi
-
+    [ "$state" = "deleted" ] && break
     sleep 15
   done
+done
+```
 
-  echo "TGW attachment 삭제 상태를 확인하세요: $attachment_id $state"
-  return 1
-}
+```bash
+aws ec2 delete-transit-gateway-route-table \
+  --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" \
+  --region "$AWS_REGION" || true
 
-wait_tgw_attachment_deleted "$APP_TGW_ATTACHMENT_ID"
-wait_tgw_attachment_deleted "$SHARED_TGW_ATTACHMENT_ID"
-wait_tgw_attachment_deleted "$INSPECTION_TGW_ATTACHMENT_ID"
+aws ec2 delete-transit-gateway-route-table \
+  --transit-gateway-route-table-id "$INSPECTION_TGW_RT_ID_STUDENT" \
+  --region "$AWS_REGION" || true
 
-aws ec2 delete-transit-gateway-route-table --transit-gateway-route-table-id "$WORKLOAD_TGW_RT_ID" --region "$AWS_REGION" || true
-aws ec2 delete-transit-gateway-route-table --transit-gateway-route-table-id "$INSPECTION_TGW_RT_ID_STUDENT" --region "$AWS_REGION" || true
+sleep 20
 
 aws ec2 delete-transit-gateway \
   --transit-gateway-id "$TGW_ID" \
@@ -835,12 +645,35 @@ aws ec2 delete-transit-gateway \
 terraform destroy
 ```
 
-## 17. 실습 포인트
+## 14. 정리 확인
+
+아래 명령 결과가 비어 있거나 `ResourceNotFound`이면 실습 리소스가 정리된 것입니다.
+
+```bash
+terraform state list
+
+aws ec2 describe-vpcs \
+  --filters "Name=tag:Name,Values=fa01hc-inspection-firewall-cli-*" \
+  --region "$AWS_REGION"
+```
+
+```bash
+aws network-firewall describe-firewall \
+  --firewall-name "$NETWORK_FIREWALL_NAME" \
+  --region "$AWS_REGION"
+
+aws network-firewall describe-rule-group \
+  --rule-group-name "$FIREWALL_RULE_GROUP_NAME" \
+  --type STATEFUL \
+  --region "$AWS_REGION"
+```
+
+## 15. 실습 포인트
 
 | 포인트 | 설명 |
 | --- | --- |
-| VPC Peering 한계 | Peering은 transitive routing을 지원하지 않아 중간 방화벽 VPC 경유 구조를 만들 수 없습니다. |
-| TGW 직접 구성 | TGW, attachment, TGW route table을 CLI로 만들면서 중앙 라우팅 구조를 이해합니다. |
-| TGW Appliance Mode | Inspection VPC attachment에는 appliance mode를 켜서 대칭 경로를 유지합니다. |
-| 방화벽 삽입 | TGW attachment subnet route table이 Network Firewall endpoint를 가리켜야 실제 경로에 방화벽이 들어갑니다. |
-| 양방향 라우팅 | 요청과 응답 방향 모두 같은 inspection 경로를 통과해야 합니다. |
+| VPC Peering 한계 | Peering은 중간 VPC 경유 라우팅을 지원하지 않습니다. |
+| TGW 직접 구성 | attachment와 route table을 만들며 중앙 라우팅 구조를 이해합니다. |
+| Appliance Mode | Inspection attachment에서 대칭 경로를 유지하는 데 필요합니다. |
+| Firewall endpoint | VPC route table이 이 endpoint를 가리켜야 실제 방화벽을 통과합니다. |
+| 양방향 라우팅 | 요청과 응답 경로가 모두 inspection 경로를 지나야 ping이 성공합니다. |
