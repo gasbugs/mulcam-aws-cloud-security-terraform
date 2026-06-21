@@ -1,6 +1,6 @@
 # AWS 환경 설정
 aws_region  = "us-east-1"
-aws_profile = "my-profile"
+aws_profile = "default"
 environment = "Production"
 
 #######################################

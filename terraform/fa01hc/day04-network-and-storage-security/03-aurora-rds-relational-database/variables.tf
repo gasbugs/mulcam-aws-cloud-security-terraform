@@ -119,3 +119,27 @@ variable "backup_retention_days" {
   type        = number
   default     = 7
 }
+
+variable "enabled_cloudwatch_logs_exports" {
+  description = "CloudWatch Logs로 내보낼 Aurora 로그 유형"
+  type        = list(string)
+  default     = ["audit"]
+}
+
+variable "audit_log_upload_role_arn" {
+  description = "server_audit_logs_upload 파라미터 방식으로 audit log를 CloudWatch Logs에 게시할 때 사용할 IAM role ARN"
+  type        = string
+  default     = null
+}
+
+variable "s3_import_export_role_arn" {
+  description = "Aurora MySQL S3 import/export 기능에서 사용할 IAM role ARN"
+  type        = string
+  default     = null
+}
+
+variable "lambda_invoke_role_arn" {
+  description = "Aurora MySQL Lambda 호출 기능에서 사용할 IAM role ARN"
+  type        = string
+  default     = null
+}

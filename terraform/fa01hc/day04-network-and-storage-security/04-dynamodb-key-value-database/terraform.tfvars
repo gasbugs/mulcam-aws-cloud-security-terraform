@@ -1,7 +1,7 @@
 #######################################
 # 프로바이더 및 환경 정보
 aws_region  = "us-east-1"
-aws_profile = "my-profile"
+aws_profile = "default"
 environment = "Production"
 owner       = "TeamA"
 

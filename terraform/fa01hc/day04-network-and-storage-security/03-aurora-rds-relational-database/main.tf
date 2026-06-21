@@ -16,6 +16,23 @@ data "aws_rds_engine_version" "aurora_mysql" {
 # 버전 우선순위: 사용자가 변수로 지정한 값 > 자동 조회한 최신 버전
 locals {
   db_engine_version = coalesce(var.db_engine_version, data.aws_rds_engine_version.aurora_mysql.version)
+  aurora_cluster_parameters = merge(
+    {
+      require_secure_transport = "ON"
+      server_audit_logging     = "1"
+      server_audit_events      = "CONNECT,QUERY_DCL,QUERY_DDL,QUERY_DML"
+    },
+    var.audit_log_upload_role_arn == null ? {} : {
+      server_audit_logs_upload = "1"
+      aws_default_logs_role    = var.audit_log_upload_role_arn
+    },
+    var.s3_import_export_role_arn == null ? {} : {
+      aws_default_s3_role = var.s3_import_export_role_arn
+    },
+    var.lambda_invoke_role_arn == null ? {} : {
+      aws_default_lambda_role = var.lambda_invoke_role_arn
+    }
+  )
 }
 
 # Amazon Linux 2023 최신 AMI를 자동으로 조회 — x86_64, HVM, EBS 조건으로 정확히 필터링
@@ -92,20 +109,43 @@ resource "aws_db_subnet_group" "this" {
   }
 }
 
+resource "aws_rds_cluster_parameter_group" "aurora_mysql" {
+  name        = "${var.cluster_identifier}-cluster-pg"
+  family      = data.aws_rds_engine_version.aurora_mysql.parameter_group_family
+  description = "Aurora MySQL cluster parameter group for security controls"
+
+  dynamic "parameter" {
+    for_each = local.aurora_cluster_parameters
+
+    content {
+      name         = parameter.key
+      value        = parameter.value
+      apply_method = "immediate"
+    }
+  }
+
+  tags = {
+    Name        = "${var.cluster_identifier}-cluster-pg"
+    Environment = var.environment
+  }
+}
+
 resource "aws_rds_cluster" "my_aurora_cluster" {
-  cluster_identifier           = var.cluster_identifier         # 클러스터 ID
-  engine                       = "aurora-mysql"                 # 엔진 종류 (MySQL 호환 Aurora)
-  engine_version               = local.db_engine_version        # 엔진 버전
-  master_username              = var.db_username                # 관리자 계정 이름
-  master_password              = var.db_password                # 관리자 계정 비밀번호
-  db_subnet_group_name         = aws_db_subnet_group.this.name  # DB 서브넷 그룹 이름
-  vpc_security_group_ids       = [aws_security_group.rds_sg.id] # VPC 보안 그룹 ID
-  skip_final_snapshot          = true                           # 삭제 시 최종 스냅샷 생략 (학습 환경용)
-  backup_retention_period      = var.backup_retention_days      # 백업 보존 기간 (일)
-  preferred_backup_window      = "07:00-09:00"                  # 백업 시간 (UTC 기준)
-  apply_immediately            = true                           # 업데이트 즉시 적용
-  preferred_maintenance_window = "mon:05:00-mon:07:00"          # 유지보수 시간 (UTC 기준)
-  storage_encrypted            = true                           # 저장 데이터 암호화 활성화
+  cluster_identifier              = var.cluster_identifier  # 클러스터 ID
+  engine                          = "aurora-mysql"          # 엔진 종류 (MySQL 호환 Aurora)
+  engine_version                  = local.db_engine_version # 엔진 버전
+  master_username                 = var.db_username         # 관리자 계정 이름
+  master_password                 = var.db_password         # 관리자 계정 비밀번호
+  db_cluster_parameter_group_name = aws_rds_cluster_parameter_group.aurora_mysql.name
+  db_subnet_group_name            = aws_db_subnet_group.this.name  # DB 서브넷 그룹 이름
+  vpc_security_group_ids          = [aws_security_group.rds_sg.id] # VPC 보안 그룹 ID
+  enabled_cloudwatch_logs_exports = var.enabled_cloudwatch_logs_exports
+  skip_final_snapshot             = true                      # 삭제 시 최종 스냅샷 생략 (학습 환경용)
+  backup_retention_period         = var.backup_retention_days # 백업 보존 기간 (일)
+  preferred_backup_window         = "07:00-09:00"             # 백업 시간 (UTC 기준)
+  apply_immediately               = true                      # 업데이트 즉시 적용
+  preferred_maintenance_window    = "mon:05:00-mon:07:00"     # 유지보수 시간 (UTC 기준)
+  storage_encrypted               = true                      # 저장 데이터 암호화 활성화
 
   tags = {
     Name        = var.cluster_identifier # 클러스터 이름 태그
