@@ -1,12 +1,14 @@
 import boto3
 from boto3.dynamodb.conditions import Key
 import datetime
+import os
 
 # AWS DynamoDB 리소스 생성
-dynamodb = boto3.resource('dynamodb')
+aws_region = os.getenv('AWS_REGION', 'us-east-1')
+dynamodb = boto3.resource('dynamodb', region_name=aws_region)
 
 # DynamoDB 테이블 이름 (main.tf에서 설정한 이름과 동일해야 함)
-table_name = 'Users'
+table_name = os.getenv('DYNAMODB_TABLE_NAME', 'Users')
 
 # 테이블 객체 생성
 table = dynamodb.Table(table_name)

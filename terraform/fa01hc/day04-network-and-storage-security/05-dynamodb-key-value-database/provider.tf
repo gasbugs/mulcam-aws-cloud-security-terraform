@@ -6,6 +6,18 @@ terraform {
       source  = "hashicorp/aws" # AWS 프로바이더의 소스 지정
       version = "~> 6.0"        # 6.x.x 버전대의 AWS 프로바이더 사용
     }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
